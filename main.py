@@ -3,7 +3,6 @@
 import os
 import logging
 import requests
-import aiohttp
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
 from aiogram.dispatcher import FSMContext
@@ -27,18 +26,8 @@ import users
 logging.basicConfig(level=logging.WARNING)
 storage = MemoryStorage()
 
-# --- SSL ПРОКСІ ДЛЯ PYTHONANYWHERE ---
-connector = aiohttp.TCPConnector(verify_ssl=False)
-session = aiohttp.ClientSession(connector=connector)
-
-bot = Bot(
-    token=TOKEN,
-    proxy="http://proxy.server:3128",
-    proxy_auth=None
-)
-bot._session = session
-# --------------------------------------
-
+# --- ТЕПЕР БЕЗ ПРОКСІ (ЧИСТИЙ ЗАПУСК НА RAILWAY) ---
+bot = Bot(token=TOKEN)
 dp = Dispatcher(bot=bot, storage=storage)
 
 # --- СТАНИ ЗАМОВЛЕННЯ ---
@@ -276,5 +265,5 @@ async def go_back(message: types.Message, state: FSMContext):
     await send_welcome(message, state)
 
 if __name__ == '__main__':
-    print("🚀 TurboShop Engine v2.9 (Full Analytics & Optimized) активовано!")
+    print("🚀 TurboShop Engine v2.9 (Railway optimized) активовано!")
     executor.start_polling(dp, skip_updates=True)
