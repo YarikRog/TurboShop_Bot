@@ -1,6 +1,7 @@
 import requests
 import logging
-from config import GAS_URL
+import os
+GAS_URL = os.getenv("GAS_URL")
 
 def register_user(user_id, username, source="Direct"):
     """
