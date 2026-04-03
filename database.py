@@ -1,6 +1,7 @@
 import requests
 import logging
-from config import GAS_URL
+import os
+GAS_URL = os.getenv("GAS_URL")
 
 # 1. Отримання всієї бази з Google Sheets (GAS)
 def get_all_items():
