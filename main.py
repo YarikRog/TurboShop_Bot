@@ -53,7 +53,7 @@ async def show_product(user_id, index, message_to_edit=None):
     data = user_products.get(user_id)
     
     if not data or 'products' not in data or not data['products']:
-        await bot.send_message(user_id, "⚠️ Дані застаріли. Будь ласка, почни пошук спочатку через Головне меню.", reply_markup=kb.main_menu())
+        await bot.send_message(user_id, "⚠️ Дані застаріли. Почни заново з меню.", reply_markup=kb.main_menu())
         return
 
     product = data['products'][index]
@@ -151,79 +151,59 @@ async def paginate(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     
     if user_id not in user_products or 'products' not in user_products[user_id]:
-        await bot.answer_callback_query(callback_query.id, text="⚠️ Оберіть категорію заново", show_alert=True)
+        await bot.answer_callback_query(callback_query.id, text="⚠️ Помилка сесії", show_alert=True)
         return
 
     if 0 <= new_index < len(user_products[user_id]['products']):
+        # ВИДАЛЯЄМО АЛЬБОМ ПРИ ГОРТАННІ
+        if 'last_album_ids' in user_products[user_id]:
+            for msg_id in user_products[user_id]['last_album_ids']:
+                try: await bot.delete_message(user_id, msg_id)
+                except: pass
+            user_products[user_id]['last_album_ids'] = []
+
         await show_product(user_id, new_index, callback_query.message.message_id)
         await bot.answer_callback_query(callback_query.id)
     else:
-        await bot.answer_callback_query(callback_query.id, text="Це кінець списку")
+        await bot.answer_callback_query(callback_query.id, text="Кінець каталогу")
 
-# --- СЕРВІСНІ КНОПКИ (НОВА ЛОГІКА "ВСІ ФОТО") ---
+# --- ДОДАТКОВІ ФОТО ---
 
 @dp.callback_query_handler(lambda c: c.data.startswith('more_photos_'), state="*")
 async def show_more_photos(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     article = callback_query.data.replace("more_photos_", "")
     
-    # 1. ВИДАЛЯЄМО СТАРИЙ АЛЬБОМ (якщо він є в пам'яті)
     if user_id in user_products and 'last_album_ids' in user_products[user_id]:
         for msg_id in user_products[user_id]['last_album_ids']:
-            try:
-                await bot.delete_message(user_id, msg_id)
-            except:
-                pass
+            try: await bot.delete_message(user_id, msg_id)
+            except: pass
         user_products[user_id]['last_album_ids'] = []
 
-    # 2. ШУКАЄМО НОВІ ФОТО
     photos = db.get_product_photos(article)
     if not photos or len(photos) <= 1:
-        await bot.answer_callback_query(callback_query.id, text="Додаткових фото немає", show_alert=True)
+        await bot.answer_callback_query(callback_query.id, text="Більше фото немає", show_alert=True)
         return
 
     media = types.MediaGroup()
-    # Шлемо з 2-го по 10-те фото
-    for p_id in photos[1:10]: 
-        media.attach_photo(p_id)
+    for p_id in photos[1:10]: media.attach_photo(p_id)
 
-    await bot.send_chat_action(user_id, types.ChatActions.UPLOAD_PHOTO)
     try:
-        # 3. НАДСИЛАЄМО НОВИЙ АЛЬБОМ І ЗАПАМ'ЯТОВУЄМО ID
         msgs = await bot.send_media_group(user_id, media=media)
         if user_id not in user_products: user_products[user_id] = {}
         user_products[user_id]['last_album_ids'] = [m.message_id for m in msgs]
-        
         await bot.answer_callback_query(callback_query.id)
-    except Exception as e:
-        logging.error(f"MediaGroup Error: {e}")
-        await bot.answer_callback_query(callback_query.id, text="Помилка відображення фото")
+    except:
+        await bot.answer_callback_query(callback_query.id, text="Помилка завантаження фото")
 
-@dp.callback_query_handler(lambda c: c.data == "show_grid_alert", state="*")
-async def show_grid_alert(callback_query: types.CallbackQuery):
-    grid_text = (
-        "📐 НАША РОЗМІРНА СІТКА:\n\n"
-        "40 — 25.5 см\n"
-        "41 — 26.0 см\n"
-        "42 — 26.5 см\n"
-        "43 — 27.5 см\n"
-        "44 — 28.0 см\n"
-        "45 — 29.0 см\n\n"
-        "Обирайте свій розмір уважно! 👟"
-    )
-    await bot.answer_callback_query(callback_query.id, text=grid_text, show_alert=True)
-
-# --- ОФОРМЛЕННЯ ЗАМОВЛЕННЯ ---
+# --- ЗАМОВЛЕННЯ ---
 
 @dp.callback_query_handler(lambda c: c.data.startswith('buy_'), state="*")
 async def process_buy(callback_query: types.CallbackQuery, state: FSMContext):
     index = int(callback_query.data.split('_')[1])
     user_id = callback_query.from_user.id
-    if user_id not in user_products or 'products' not in user_products[user_id]:
-        await bot.send_message(user_id, "Помилка сесії. Почніть спочатку.")
-        return
-        
     product = user_products[user_id]['products'][index]
+    
     await state.update_data(item=f"{product.get('Бренд')} {product.get('Модель')}", article=product.get('Артикул'), price=product.get('Ціна'))
     await OrderState.waiting_for_phone.set()
     await bot.send_message(user_id, "🚀 Поділіться номером телефону:", reply_markup=kb.get_contact_keyboard())
@@ -243,29 +223,39 @@ async def get_fio(message: types.Message, state: FSMContext):
 @dp.message_handler(state=OrderState.waiting_for_delivery)
 async def get_delivery(message: types.Message, state: FSMContext):
     await state.update_data(delivery=message.text)
-    data = await state.get_data()
-    try: 
-        requests.post(GAS_URL, json=data, timeout=10)
-    except: 
-        logging.error("Помилка відправки в GAS")
+    user_data = await state.get_data()
+    username = f"@{message.from_user.username}" if message.from_user.username else "Приховано"
+    user_data['username'] = username
     
-    msg = f"🔥 <b>ЗАМОВЛЕННЯ!</b>\n\n👟 {data['item']}\n📱 {data['phone']}\n👤 {data['fio']}\n📍 {data['delivery']}"
+    try: requests.post(GAS_URL, json=user_data, timeout=5)
+    except: logging.error("GAS Error")
+    
+    admin_msg = (
+        f"🛍 <b>НОВЕ ЗАМОВЛЕННЯ!</b>\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"👟 <b>{user_data['item']}</b>\n"
+        f"🆔 Артикул: <code>{user_data['article']}</code>\n"
+        f"💰 Ціна: {user_data['price']} грн\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"👤 Клієнт: {user_data['fio']}\n"
+        f"📱 Тел: {user_data['phone']}\n"
+        f"✈️ НП: {user_data['delivery']}\n"
+        f"🔗 Зв'язок: {username}"
+    )
+
     for admin in ADMIN_IDS:
-        try: await bot.send_message(admin, msg, parse_mode="HTML")
+        try: await bot.send_message(admin, admin_msg, parse_mode="HTML")
         except: pass
         
-    await message.answer("✅ ВАШЕ ЗАМОВЛЕННЯ УСПІШНО ПРИЙНЯТО!\nМенеджер зв'яжеться з вами. 🚀", reply_markup=kb.main_menu())
+    await message.answer("✅ ВАШЕ ЗАМОВЛЕННЯ ПРИЙНЯТО! 🚀", reply_markup=kb.main_menu())
     await state.finish()
 
 @dp.message_handler(lambda message: message.text in ["🏠 Головне меню", "⬅️ Назад"], state="*")
 async def go_home(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    if user_id in user_products:
-        user_products[user_id]['last_album_ids'] = []
     await send_welcome(message, state)
 
 if __name__ == '__main__':
-    print("🚀 TurboShop Engine v3.2 запуск...")
+    print("🚀 TurboShop Engine v3.3 запуск...")
     loop = asyncio.get_event_loop()
     loop.create_task(update_cache_task())
     executor.start_polling(dp, skip_updates=True)
