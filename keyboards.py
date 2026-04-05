@@ -1,9 +1,14 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
-# 1. Головне меню (Вибір статі)
+# 1. Головне меню (Розширене)
 def main_menu():
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(KeyboardButton("👟 Чоловічі"), KeyboardButton("👠 Жіночі"))
+    # Перший ряд — наші основні напрямки
+    keyboard.row(KeyboardButton("👟 Чоловічі"), KeyboardButton("👠 Жіночі"))
+    # Другий ряд — Новинки та Підбір
+    keyboard.row(KeyboardButton("🔥 Наші новинки"), KeyboardButton("🎯 Підібрати пару"))
+    # Третій ряд — Сервіс
+    keyboard.row(KeyboardButton("🛒 Кошик"), KeyboardButton("💬 Менеджер"))
     return keyboard
 
 # 2. Кнопки брендів
@@ -11,7 +16,7 @@ def get_brands_keyboard(brands):
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     for brand in brands:
         keyboard.insert(KeyboardButton(f"🔹 {brand}"))
-    keyboard.add(KeyboardButton("⬅️ Назад"))
+    keyboard.add(KeyboardButton("🏠 Головне меню")) # Щоб завжди можна було вийти
     return keyboard
 
 # 3. Кнопки вибору розміру
@@ -23,40 +28,33 @@ def get_sizes_keyboard(sizes):
     keyboard.add(*buttons)
     return keyboard
 
-# 4. ГОЛОВНИЙ ГОРТАЧ (Оновлений UX: Замовити — головна кнопка на весь рядок)
+# 4. Картка товару (Навігація + Замовити)
 def get_product_navigation(index, total, article):
     keyboard = InlineKeyboardMarkup(row_width=3)
 
-    # 1 РЯД: Навігація (стрілки та лічильник)
+    # Навігація
     btn_prev = InlineKeyboardButton(text="⬅️", callback_data=f"prev_{index}")
     btn_count = InlineKeyboardButton(text=f"{index + 1} / {total}", callback_data="ignore_count")
     btn_next = InlineKeyboardButton(text="➡️", callback_data=f"next_{index}")
 
     nav_row = []
-    if index > 0:
-        nav_row.append(btn_prev)
+    if index > 0: nav_row.append(btn_prev)
     nav_row.append(btn_count)
-    if index < total - 1:
-        nav_row.append(btn_next)
-
+    if index < total - 1: nav_row.append(btn_next)
     keyboard.row(*nav_row)
 
-    # 2 РЯД: ГОЛОВНА КНОПКА ЗАМОВЛЕННЯ (Тепер вона величезна і по центру)
-    # Використовуємо .add(), щоб кнопка розтягнулася на всю ширину
-    btn_buy = InlineKeyboardButton(text="💎 ЗАМОВИТИ ЦЮ МОДЕЛЬ 💎", callback_data=f"buy_{index}")
-    keyboard.add(btn_buy)
+    # Кнопка замовлення (Головна)
+    keyboard.add(InlineKeyboardButton(text="💎 ЗАМОВИТИ ЦЮ МОДЕЛЬ 💎", callback_data=f"buy_{index}"))
 
-    # 3 РЯД: Сервісні кнопки (Додаткові фото та сітка в одному рядку)
+    # Сервісні кнопки
     btn_more_photos = InlineKeyboardButton(text="📸 Додаткові фото", callback_data=f"more_photos_{article}")
     btn_grid = InlineKeyboardButton(text="📐 Розмірна сітка", callback_data="show_grid_now")
-
     keyboard.row(btn_more_photos, btn_grid)
 
     return keyboard
 
-# 5. Кнопка запиту ТЕЛЕФОНУ
+# 5. Контакт
 def get_contact_keyboard():
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    button = KeyboardButton("📱 Поділитися номером телефону", request_contact=True)
-    keyboard.add(button)
+    keyboard.add(KeyboardButton("📱 Поділитися номером телефону", request_contact=True))
     return keyboard
