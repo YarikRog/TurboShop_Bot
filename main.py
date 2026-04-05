@@ -58,14 +58,14 @@ async def show_product(user_id, index, message_to_edit=None):
     product = data['products'][index]
     total = len(data['products'])
     
+    # Вирівнювання тексту за допомогою невидимого пробілу
     caption = (
-        f"👟 <b>{product.get('Бренд')} {product.get('Модель')}</b>\n"
-        f"💰 Ціна: <b>{product.get('Ціна')} грн</b>\n"
-        f"📏 Розмір: {data.get('size', '—')}\n"
-        f"🆔 Артикул: <code>{product.get('Артикул')}</code>"
+        f"⠀👟 <b>{product.get('Бренд')} {product.get('Модель')}</b>\n"
+        f"⠀💰 Ціна: <b>{product.get('Ціна')} грн</b>\n"
+        f"⠀📏 Розмір: {data.get('size', '—')}\n"
+        f"⠀🆔 Артикул: <code>{product.get('Артикул')}</code>"
     )
     
-    # ТУТ БУЛА ПОМИЛКА: додано ALL_PRODUCTS
     photos = db.get_product_photos(ALL_PRODUCTS, product.get('Артикул'))
     photo = photos[0] if photos else "https://via.placeholder.com/500"
     markup = kb.get_product_navigation(index, total, product.get('Артикул'))
@@ -121,9 +121,7 @@ async def choose_size(message: types.Message):
     user_products[user_id]['brand'] = brand
     category = user_products[user_id].get('category', 'Чоловічі')
 
-    # ВАЖЛИВО: додано ALL_PRODUCTS
     sizes = db.get_available_sizes(ALL_PRODUCTS, category, brand) 
-
     await message.answer(f"Який розмір {brand} шукаємо?", reply_markup=kb.get_sizes_keyboard(sizes))
 
 @dp.callback_query_handler(lambda c: c.data.startswith('size_'), state="*")
@@ -172,7 +170,6 @@ async def show_more_photos(callback_query: types.CallbackQuery):
             except: pass
         user_products[user_id]['last_album_ids'] = []
 
-    # ТУТ БУЛА ПОМИЛКА: додано ALL_PRODUCTS
     photos = db.get_product_photos(ALL_PRODUCTS, article)
     if not photos or len(photos) <= 1:
         await bot.answer_callback_query(callback_query.id, text="Більше фото немає", show_alert=True)
@@ -216,18 +213,24 @@ async def get_fio(message: types.Message, state: FSMContext):
 async def get_delivery(message: types.Message, state: FSMContext):
     await state.update_data(delivery=message.text)
     user_data = await state.get_data()
-    username = f"@{message.from_user.username}" if message.from_user.username else "Приховано"
     
-    try: requests.post(GAS_URL, json=user_data, timeout=5)
-    except: pass
+    # Створюємо посилання на чат
+    user_id = message.from_user.id
+    username = f"@{message.from_user.username}" if message.from_user.username else "Приховано"
+    user_link = f"<a href='tg://user?id={user_id}'>Перейти в чат</a>"
+    
+    try: 
+        requests.post(GAS_URL, json=user_data, timeout=5)
+    except: 
+        pass
     
     admin_msg = (f"🛍 <b>НОВЕ ЗАМОВЛЕННЯ!</b>\n"
-                 f"👟 <b>{user_data['item']}</b>\n"
-                 f"🆔 Артикул: <code>{user_data['article']}</code>\n"
-                 f"👤 Клієнт: {user_data['fio']}\n"
-                 f"📱 Тел: {user_data['phone']}\n"
-                 f"✈️ НП: {user_data['delivery']}\n"
-                 f"🔗 Зв'язок: {username}")
+                 f"⠀👟 <b>{user_data['item']}</b>\n"
+                 f"⠀🆔 Артикул: <code>{user_data['article']}</code>\n"
+                 f"⠀👤 Клієнт: {user_data['fio']}\n"
+                 f"⠀📱 Тел: {user_data['phone']}\n"
+                 f"⠀✈️ НП: {user_data['delivery']}\n"
+                 f"⠀🔗 Зв'язок: {username} | {user_link}")
 
     for admin in ADMIN_IDS:
         try: await bot.send_message(admin, admin_msg, parse_mode="HTML")
