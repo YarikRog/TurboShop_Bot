@@ -58,7 +58,6 @@ async def show_product(user_id, index, message_to_edit=None):
     product = data['products'][index]
     total = len(data['products'])
     
-    # Вирівнювання тексту за допомогою невидимого пробілу
     caption = (
         f"⠀👟 <b>{product.get('Бренд')} {product.get('Модель')}</b>\n"
         f"⠀💰 Ціна: <b>{product.get('Ціна')} грн</b>\n"
@@ -214,29 +213,51 @@ async def get_delivery(message: types.Message, state: FSMContext):
     await state.update_data(delivery=message.text)
     user_data = await state.get_data()
     
-    # Створюємо посилання на чат
     user_id = message.from_user.id
     username = f"@{message.from_user.username}" if message.from_user.username else "Приховано"
-    user_link = f"<a href='tg://user?id={user_id}'>Перейти в чат</a>"
     
+    # Створюємо посилання двома способами для надійності
+    user_link = f"https://t.me/user?id={user_id}" 
+    mention = f"<a href='tg://user?id={user_id}'>КЛІК СЮДИ</a>"
+
+    # 1. Відправка в GAS
     try: 
         requests.post(GAS_URL, json=user_data, timeout=5)
     except: 
         pass
     
+    # 2. Повідомлення АДМІНУ
     admin_msg = (f"🛍 <b>НОВЕ ЗАМОВЛЕННЯ!</b>\n"
                  f"⠀👟 <b>{user_data['item']}</b>\n"
                  f"⠀🆔 Артикул: <code>{user_data['article']}</code>\n"
                  f"⠀👤 Клієнт: {user_data['fio']}\n"
                  f"⠀📱 Тел: {user_data['phone']}\n"
                  f"⠀✈️ НП: {user_data['delivery']}\n"
-                 f"⠀🔗 Зв'язок: {username} | {user_link}")
+                 f"⠀🔗 Зв'язок: {username}\n"
+                 f"⠀📱 Чат з клієнтом: {mention}\n"
+                 f"⠀🔗 Пряме посилання: {user_link}")
 
     for admin in ADMIN_IDS:
-        try: await bot.send_message(admin, admin_msg, parse_mode="HTML")
-        except: pass
+        try: 
+            await bot.send_message(admin, admin_msg, parse_mode="HTML", disable_web_page_preview=True)
+        except Exception as e:
+            logging.error(f"Admin notify error: {e}")
         
-    await message.answer("✅ ВАШЕ ЗАМОВЛЕННЯ ПРИЙНЯТО! 🚀", reply_markup=kb.main_menu())
+    # 3. Підтвердження КЛІЄНТУ
+    client_msg = (
+        f"✅ <b>ВАШЕ ЗАМОВЛЕННЯ ПРИЙНЯТО!</b>\n\n"
+        f"<b>Деталі замовлення:</b>\n"
+        f"───────────────────\n"
+        f"⠀👟 Товар: <b>{user_data['item']}</b>\n"
+        f"⠀💰 Ціна: <b>{user_data['price']} грн</b>\n"
+        f"⠀👤 Отримувач: {user_data['fio']}\n"
+        f"⠀📱 Телефон: {user_data['phone']}\n"
+        f"⠀✈️ Доставка: {user_data['delivery']}\n"
+        f"───────────────────\n\n"
+        f"🚀 Менеджер зв'яжеться з тобою найближчим часом!"
+    )
+    
+    await message.answer(client_msg, parse_mode="HTML", reply_markup=kb.main_menu())
     await state.finish()
 
 @dp.message_handler(lambda message: message.text in ["🏠 Головне меню", "⬅️ Назад"], state="*")
