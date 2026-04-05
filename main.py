@@ -124,7 +124,8 @@ async def choose_size(message: types.Message):
     if user_id not in user_products:
         user_products[user_id] = {'last_album_ids': []}
     user_products[user_id]['brand'] = brand
-    sizes = db.get_available_sizes(user_products[user_id].get('category', 'Чоловічі'), brand)
+    category = user_products[user_id].get('category', 'Чоловічі')
+    sizes = db.get_available_sizes(category, brand)
     await message.answer(f"Який розмір {brand} шукаємо?", reply_markup=kb.get_sizes_keyboard(sizes))
 
 @dp.callback_query_handler(lambda c: c.data.startswith('size_'), state="*")
@@ -155,7 +156,6 @@ async def paginate(callback_query: types.CallbackQuery):
         return
 
     if 0 <= new_index < len(user_products[user_id]['products']):
-        # ВИДАЛЯЄМО АЛЬБОМ ПРИ ГОРТАННІ
         if 'last_album_ids' in user_products[user_id]:
             for msg_id in user_products[user_id]['last_album_ids']:
                 try: await bot.delete_message(user_id, msg_id)
