@@ -51,7 +51,6 @@ class OrderState(StatesGroup):
 
 async def show_product(user_id, index, message_to_edit=None):
     data = user_products.get(user_id)
-    
     if not data or 'products' not in data or not data['products']:
         await bot.send_message(user_id, "⚠️ Дані застаріли. Почни заново з меню.", reply_markup=kb.main_menu())
         return
@@ -68,7 +67,6 @@ async def show_product(user_id, index, message_to_edit=None):
     
     photos = db.get_product_photos(product.get('Артикул'))
     photo = photos[0] if photos else "https://via.placeholder.com/500"
-    
     markup = kb.get_product_navigation(index, total, product.get('Артикул'))
 
     if message_to_edit:
@@ -101,11 +99,7 @@ async def show_novinki(message: types.Message):
 async def contact_manager(message: types.Message):
     await message.answer("Виникли питання? Пиши нашому менеджеру: @yarik721 👨‍💻")
 
-@dp.message_handler(lambda message: message.text == "🛒 Кошик", state="*")
-async def show_cart(message: types.Message):
-    await message.answer("Твій кошик поки порожній. Час щось обрати! 👟")
-
-# --- КАТАЛОГ ТА ПАГІНАЦІЯ ---
+# --- КАТАЛОГ ---
 
 @dp.message_handler(lambda message: message.text in ["👟 Чоловічі", "👠 Жіночі"], state="*")
 async def show_brands(message: types.Message):
@@ -151,11 +145,8 @@ async def paginate(callback_query: types.CallbackQuery):
     new_index = int(index) + 1 if action == 'next' else int(index) - 1
     user_id = callback_query.from_user.id
     
-    if user_id not in user_products or 'products' not in user_products[user_id]:
-        await bot.answer_callback_query(callback_query.id, text="⚠️ Помилка сесії", show_alert=True)
-        return
-
     if 0 <= new_index < len(user_products[user_id]['products']):
+        # Чистимо альбоми
         if 'last_album_ids' in user_products[user_id]:
             for msg_id in user_products[user_id]['last_album_ids']:
                 try: await bot.delete_message(user_id, msg_id)
@@ -164,8 +155,6 @@ async def paginate(callback_query: types.CallbackQuery):
 
         await show_product(user_id, new_index, callback_query.message.message_id)
         await bot.answer_callback_query(callback_query.id)
-    else:
-        await bot.answer_callback_query(callback_query.id, text="Кінець каталогу")
 
 # --- ДОДАТКОВІ ФОТО ---
 
@@ -190,11 +179,10 @@ async def show_more_photos(callback_query: types.CallbackQuery):
 
     try:
         msgs = await bot.send_media_group(user_id, media=media)
-        if user_id not in user_products: user_products[user_id] = {}
         user_products[user_id]['last_album_ids'] = [m.message_id for m in msgs]
         await bot.answer_callback_query(callback_query.id)
     except:
-        await bot.answer_callback_query(callback_query.id, text="Помилка завантаження фото")
+        await bot.answer_callback_query(callback_query.id, text="Помилка фото")
 
 # --- ЗАМОВЛЕННЯ ---
 
@@ -225,23 +213,17 @@ async def get_delivery(message: types.Message, state: FSMContext):
     await state.update_data(delivery=message.text)
     user_data = await state.get_data()
     username = f"@{message.from_user.username}" if message.from_user.username else "Приховано"
-    user_data['username'] = username
     
     try: requests.post(GAS_URL, json=user_data, timeout=5)
-    except: logging.error("GAS Error")
+    except: pass
     
-    admin_msg = (
-        f"🛍 <b>НОВЕ ЗАМОВЛЕННЯ!</b>\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"👟 <b>{user_data['item']}</b>\n"
-        f"🆔 Артикул: <code>{user_data['article']}</code>\n"
-        f"💰 Ціна: {user_data['price']} грн\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"👤 Клієнт: {user_data['fio']}\n"
-        f"📱 Тел: {user_data['phone']}\n"
-        f"✈️ НП: {user_data['delivery']}\n"
-        f"🔗 Зв'язок: {username}"
-    )
+    admin_msg = (f"🛍 <b>НОВЕ ЗАМОВЛЕННЯ!</b>\n"
+                 f"👟 <b>{user_data['item']}</b>\n"
+                 f"🆔 Артикул: <code>{user_data['article']}</code>\n"
+                 f"👤 Клієнт: {user_data['fio']}\n"
+                 f"📱 Тел: {user_data['phone']}\n"
+                 f"✈️ НП: {user_data['delivery']}\n"
+                 f"🔗 Зв'язок: {username}")
 
     for admin in ADMIN_IDS:
         try: await bot.send_message(admin, admin_msg, parse_mode="HTML")
@@ -252,10 +234,10 @@ async def get_delivery(message: types.Message, state: FSMContext):
 
 @dp.message_handler(lambda message: message.text in ["🏠 Головне меню", "⬅️ Назад"], state="*")
 async def go_home(message: types.Message, state: FSMContext):
-    await send_welcome(message, state)
+    await state.finish()
+    await message.answer("Головне меню:", reply_markup=kb.main_menu())
 
 if __name__ == '__main__':
-    print("🚀 TurboShop Engine v3.3 запуск...")
     loop = asyncio.get_event_loop()
     loop.create_task(update_cache_task())
     executor.start_polling(dp, skip_updates=True)
