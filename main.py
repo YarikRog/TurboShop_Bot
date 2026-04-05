@@ -66,7 +66,6 @@ async def show_product(user_id, index, message_to_edit=None):
         f"🆔 Артикул: <code>{product.get('Артикул')}</code>"
     )
     
-    # Використовуємо перше фото з твого списку
     photos = db.get_product_photos(product.get('Артикул'))
     photo = photos[0] if photos else "https://via.placeholder.com/500"
     
@@ -95,7 +94,7 @@ async def show_novinki(message: types.Message):
     if not novinki:
         await message.answer("Скоро будуть! 😉")
         return
-    user_products[message.from_user.id] = {'products': novinki, 'size': 'Всі'}
+    user_products[message.from_user.id] = {'products': novinki, 'size': 'Всі', 'last_album_ids': []}
     await show_product(message.from_user.id, 0)
 
 @dp.message_handler(lambda message: message.text == "💬 Менеджер", state="*")
@@ -111,7 +110,7 @@ async def show_cart(message: types.Message):
 @dp.message_handler(lambda message: message.text in ["👟 Чоловічі", "👠 Жіночі"], state="*")
 async def show_brands(message: types.Message):
     category = "Чоловічі" if "Чоловічі" in message.text else "Жіночі"
-    user_products[message.from_user.id] = {'category': category}
+    user_products[message.from_user.id] = {'category': category, 'last_album_ids': []}
     brands = sorted(list(set([str(i.get('Бренд')).strip() for i in ALL_PRODUCTS if str(i.get('Категорія')).strip() == category])))
     if not brands:
         await message.answer("На жаль, зараз порожньо.")
@@ -123,7 +122,7 @@ async def choose_size(message: types.Message):
     brand = message.text.replace("🔹 ", "").strip()
     user_id = message.from_user.id
     if user_id not in user_products:
-        user_products[user_id] = {}
+        user_products[user_id] = {'last_album_ids': []}
     user_products[user_id]['brand'] = brand
     sizes = db.get_available_sizes(user_products[user_id].get('category', 'Чоловічі'), brand)
     await message.answer(f"Який розмір {brand} шукаємо?", reply_markup=kb.get_sizes_keyboard(sizes))
@@ -132,7 +131,7 @@ async def choose_size(message: types.Message):
 async def start_catalog(callback_query: types.CallbackQuery):
     size = callback_query.data.replace("size_", "")
     u_id = callback_query.from_user.id
-    if u_id not in user_products: user_products[u_id] = {}
+    if u_id not in user_products: user_products[u_id] = {'last_album_ids': []}
     user_products[u_id]['size'] = size
     
     cat = user_products[u_id].get('category')
@@ -161,18 +160,25 @@ async def paginate(callback_query: types.CallbackQuery):
     else:
         await bot.answer_callback_query(callback_query.id, text="Це кінець списку")
 
-# --- СЕРВІСНІ КНОПКИ ---
+# --- СЕРВІСНІ КНОПКИ (НОВА ЛОГІКА "ВСІ ФОТО") ---
 
 @dp.callback_query_handler(lambda c: c.data.startswith('more_photos_'), state="*")
 async def show_more_photos(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
     article = callback_query.data.replace("more_photos_", "")
-    photos = db.get_product_photos(article)
     
-    if not photos:
-        await bot.answer_callback_query(callback_query.id, text="Фото не знайдено 😔", show_alert=True)
-        return
+    # 1. ВИДАЛЯЄМО СТАРИЙ АЛЬБОМ (якщо він є в пам'яті)
+    if user_id in user_products and 'last_album_ids' in user_products[user_id]:
+        for msg_id in user_products[user_id]['last_album_ids']:
+            try:
+                await bot.delete_message(user_id, msg_id)
+            except:
+                pass
+        user_products[user_id]['last_album_ids'] = []
 
-    if len(photos) <= 1:
+    # 2. ШУКАЄМО НОВІ ФОТО
+    photos = db.get_product_photos(article)
+    if not photos or len(photos) <= 1:
         await bot.answer_callback_query(callback_query.id, text="Додаткових фото немає", show_alert=True)
         return
 
@@ -181,9 +187,13 @@ async def show_more_photos(callback_query: types.CallbackQuery):
     for p_id in photos[1:10]: 
         media.attach_photo(p_id)
 
-    await bot.send_chat_action(callback_query.from_user.id, types.ChatActions.UPLOAD_PHOTO)
+    await bot.send_chat_action(user_id, types.ChatActions.UPLOAD_PHOTO)
     try:
-        await bot.send_media_group(callback_query.from_user.id, media=media)
+        # 3. НАДСИЛАЄМО НОВИЙ АЛЬБОМ І ЗАПАМ'ЯТОВУЄМО ID
+        msgs = await bot.send_media_group(user_id, media=media)
+        if user_id not in user_products: user_products[user_id] = {}
+        user_products[user_id]['last_album_ids'] = [m.message_id for m in msgs]
+        
         await bot.answer_callback_query(callback_query.id)
     except Exception as e:
         logging.error(f"MediaGroup Error: {e}")
@@ -249,10 +259,13 @@ async def get_delivery(message: types.Message, state: FSMContext):
 
 @dp.message_handler(lambda message: message.text in ["🏠 Головне меню", "⬅️ Назад"], state="*")
 async def go_home(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    if user_id in user_products:
+        user_products[user_id]['last_album_ids'] = []
     await send_welcome(message, state)
 
 if __name__ == '__main__':
-    print("🚀 TurboShop Engine v3.1 запуск...")
+    print("🚀 TurboShop Engine v3.2 запуск...")
     loop = asyncio.get_event_loop()
     loop.create_task(update_cache_task())
     executor.start_polling(dp, skip_updates=True)
