@@ -29,7 +29,7 @@ dp = Dispatcher(bot=bot, storage=storage)
 ALL_PRODUCTS = []
 user_products = {}
 
-# --- ФОНОВЕ ОНОВЛЕННЯ ---
+# --- ФОНОВЕ ОНОВЛЕННЯ КЕШУ ---
 async def update_cache_task():
     global ALL_PRODUCTS
     while True:
@@ -40,7 +40,7 @@ async def update_cache_task():
                 print(f"✅ Кеш оновлено: {len(ALL_PRODUCTS)} товарів")
         except Exception as e: 
             print(f"❌ Помилка кешу: {e}")
-        await asyncio.sleep(600) # Оновлення кожні 10 хв
+        await asyncio.sleep(600)
 
 class OrderState(StatesGroup):
     waiting_for_phone = State()
@@ -52,7 +52,6 @@ class OrderState(StatesGroup):
 async def show_product(user_id, index, message_to_edit=None):
     data = user_products.get(user_id)
     
-    # ПЕРЕВІРКА: якщо даних немає (наприклад, після рестарту бота)
     if not data or 'products' not in data or not data['products']:
         await bot.send_message(user_id, "⚠️ Дані застаріли. Будь ласка, почни пошук спочатку через Головне меню.", reply_markup=kb.main_menu())
         return
@@ -79,7 +78,7 @@ async def show_product(user_id, index, message_to_edit=None):
     else:
         await bot.send_photo(user_id, photo, caption=caption, parse_mode="HTML", reply_markup=markup)
 
-# --- ХЕНДЛЕРИ ---
+# --- ОСНОВНІ ХЕНДЛЕРИ ---
 
 @dp.message_handler(commands=['start'], state="*")
 async def send_welcome(message: types.Message, state: FSMContext):
@@ -87,7 +86,6 @@ async def send_welcome(message: types.Message, state: FSMContext):
     users.register_user(message.from_user.id, message.from_user.username, "Direct")
     await message.answer("Вітаємо у TurboShop! 👟\nТут ти знайдеш найкращий стафф.", reply_markup=kb.main_menu())
 
-# НОВИНКИ
 @dp.message_handler(lambda message: message.text == "🔥 Наші новинки", state="*")
 async def show_novinki(message: types.Message):
     novinki = ALL_PRODUCTS[-10:]
@@ -97,17 +95,16 @@ async def show_novinki(message: types.Message):
     user_products[message.from_user.id] = {'products': novinki, 'size': 'Всі'}
     await show_product(message.from_user.id, 0)
 
-# МЕНЕДЖЕР
 @dp.message_handler(lambda message: message.text == "💬 Менеджер", state="*")
 async def contact_manager(message: types.Message):
     await message.answer("Виникли питання? Пиши нашому менеджеру: @yarik721 👨‍💻")
 
-# КОШИК
 @dp.message_handler(lambda message: message.text == "🛒 Кошик", state="*")
 async def show_cart(message: types.Message):
     await message.answer("Твій кошик поки порожній. Час щось обрати! 👟")
 
-# ВИБІР СТАТІ
+# --- КАТАЛОГ ТА ПАГІНАЦІЯ ---
+
 @dp.message_handler(lambda message: message.text in ["👟 Чоловічі", "👠 Жіночі"], state="*")
 async def show_brands(message: types.Message):
     category = "Чоловічі" if "Чоловічі" in message.text else "Жіночі"
@@ -161,7 +158,49 @@ async def paginate(callback_query: types.CallbackQuery):
     else:
         await bot.answer_callback_query(callback_query.id, text="Це кінець списку")
 
-# --- ОФОРМЛЕННЯ ---
+# --- СЕРВІСНІ КНОПКИ (ФОТО ТА СІТКА) ---
+
+@dp.callback_query_handler(lambda c: c.data.startswith('more_photos_'), state="*")
+async def show_more_photos(callback_query: types.CallbackQuery):
+    article = callback_query.data.replace("more_photos_", "")
+    product = next((i for i in ALL_PRODUCTS if str(i.get('Артикул')) == article), None)
+    
+    if not product or not product.get('Фото'):
+        await bot.answer_callback_query(callback_query.id, text="Фото не знайдено 😔", show_alert=True)
+        return
+
+    photos = [p.strip() for p in str(product.get('Фото')).split(',') if p.strip()]
+    
+    if len(photos) <= 1:
+        await bot.answer_callback_query(callback_query.id, text="Додаткових фото немає", show_alert=True)
+        return
+
+    media = types.MediaGroup()
+    for p_url in photos[1:10]: 
+        media.attach_photo(p_url)
+
+    await bot.send_chat_action(callback_query.from_user.id, types.ChatActions.UPLOAD_PHOTO)
+    try:
+        await bot.send_media_group(callback_query.from_user.id, media=media)
+        await bot.answer_callback_query(callback_query.id)
+    except:
+        await bot.answer_callback_query(callback_query.id, text="Помилка завантаження альбому")
+
+@dp.callback_query_handler(lambda c: c.data == "show_grid_alert", state="*")
+async def show_grid_alert(callback_query: types.CallbackQuery):
+    grid_text = (
+        "📐 НАША РОЗМІРНА СІТКА:\n\n"
+        "40 — 25.5 см\n"
+        "41 — 26.0 см\n"
+        "42 — 26.5 см\n"
+        "43 — 27.5 см\n"
+        "44 — 28.0 см\n"
+        "45 — 29.0 см\n\n"
+        "Обирайте свій розмір уважно! 👟"
+    )
+    await bot.answer_callback_query(callback_query.id, text=grid_text, show_alert=True)
+
+# --- ОФОРМЛЕННЯ ЗАМОВЛЕННЯ ---
 
 @dp.callback_query_handler(lambda c: c.data.startswith('buy_'), state="*")
 async def process_buy(callback_query: types.CallbackQuery, state: FSMContext):
