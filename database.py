@@ -5,7 +5,6 @@ import os
 GAS_URL = os.getenv("GAS_URL")
 
 # 1. Отримання всієї бази з Google Sheets (GAS)
-# Ми залишаємо цю функцію для фонового оновлення кешу в main.py
 def get_all_items():
     try:
         # Зменшив таймаут, щоб бот не висів довго, якщо Google лежить
