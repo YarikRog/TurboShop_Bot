@@ -65,7 +65,8 @@ async def show_product(user_id, index, message_to_edit=None):
         f"🆔 Артикул: <code>{product.get('Артикул')}</code>"
     )
     
-    photos = db.get_product_photos(product.get('Артикул'))
+    # ТУТ БУЛА ПОМИЛКА: додано ALL_PRODUCTS
+    photos = db.get_product_photos(ALL_PRODUCTS, product.get('Артикул'))
     photo = photos[0] if photos else "https://via.placeholder.com/500"
     markup = kb.get_product_navigation(index, total, product.get('Артикул'))
 
@@ -119,7 +120,10 @@ async def choose_size(message: types.Message):
         user_products[user_id] = {'last_album_ids': []}
     user_products[user_id]['brand'] = brand
     category = user_products[user_id].get('category', 'Чоловічі')
-    sizes = db.get_available_sizes(category, brand)
+
+    # ВАЖЛИВО: додано ALL_PRODUCTS
+    sizes = db.get_available_sizes(ALL_PRODUCTS, category, brand) 
+
     await message.answer(f"Який розмір {brand} шукаємо?", reply_markup=kb.get_sizes_keyboard(sizes))
 
 @dp.callback_query_handler(lambda c: c.data.startswith('size_'), state="*")
@@ -146,7 +150,6 @@ async def paginate(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     
     if 0 <= new_index < len(user_products[user_id]['products']):
-        # Чистимо альбоми
         if 'last_album_ids' in user_products[user_id]:
             for msg_id in user_products[user_id]['last_album_ids']:
                 try: await bot.delete_message(user_id, msg_id)
@@ -169,7 +172,8 @@ async def show_more_photos(callback_query: types.CallbackQuery):
             except: pass
         user_products[user_id]['last_album_ids'] = []
 
-    photos = db.get_product_photos(article)
+    # ТУТ БУЛА ПОМИЛКА: додано ALL_PRODUCTS
+    photos = db.get_product_photos(ALL_PRODUCTS, article)
     if not photos or len(photos) <= 1:
         await bot.answer_callback_query(callback_query.id, text="Більше фото немає", show_alert=True)
         return
