@@ -66,7 +66,10 @@ async def show_product(user_id, index, message_to_edit=None):
         f"🆔 Артикул: <code>{product.get('Артикул')}</code>"
     )
     
-    photo = str(product.get('Фото')).split(',')[0].strip()
+    # Використовуємо перше фото з твого списку
+    photos = db.get_product_photos(product.get('Артикул'))
+    photo = photos[0] if photos else "https://via.placeholder.com/500"
+    
     markup = kb.get_product_navigation(index, total, product.get('Артикул'))
 
     if message_to_edit:
@@ -158,33 +161,33 @@ async def paginate(callback_query: types.CallbackQuery):
     else:
         await bot.answer_callback_query(callback_query.id, text="Це кінець списку")
 
-# --- СЕРВІСНІ КНОПКИ (ФОТО ТА СІТКА) ---
+# --- СЕРВІСНІ КНОПКИ ---
 
 @dp.callback_query_handler(lambda c: c.data.startswith('more_photos_'), state="*")
 async def show_more_photos(callback_query: types.CallbackQuery):
     article = callback_query.data.replace("more_photos_", "")
-    product = next((i for i in ALL_PRODUCTS if str(i.get('Артикул')) == article), None)
+    photos = db.get_product_photos(article)
     
-    if not product or not product.get('Фото'):
+    if not photos:
         await bot.answer_callback_query(callback_query.id, text="Фото не знайдено 😔", show_alert=True)
         return
 
-    photos = [p.strip() for p in str(product.get('Фото')).split(',') if p.strip()]
-    
     if len(photos) <= 1:
         await bot.answer_callback_query(callback_query.id, text="Додаткових фото немає", show_alert=True)
         return
 
     media = types.MediaGroup()
-    for p_url in photos[1:10]: 
-        media.attach_photo(p_url)
+    # Шлемо з 2-го по 10-те фото
+    for p_id in photos[1:10]: 
+        media.attach_photo(p_id)
 
     await bot.send_chat_action(callback_query.from_user.id, types.ChatActions.UPLOAD_PHOTO)
     try:
         await bot.send_media_group(callback_query.from_user.id, media=media)
         await bot.answer_callback_query(callback_query.id)
-    except:
-        await bot.answer_callback_query(callback_query.id, text="Помилка завантаження альбому")
+    except Exception as e:
+        logging.error(f"MediaGroup Error: {e}")
+        await bot.answer_callback_query(callback_query.id, text="Помилка відображення фото")
 
 @dp.callback_query_handler(lambda c: c.data == "show_grid_alert", state="*")
 async def show_grid_alert(callback_query: types.CallbackQuery):
