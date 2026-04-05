@@ -223,18 +223,23 @@ async def get_delivery(message: types.Message, state: FSMContext):
         pass
     
     # 2. Повідомлення АДМІНУ
+    phone_formatted = user_data['phone'] if str(user_data['phone']).startswith('+') else f"+{user_data['phone']}"
+
     admin_msg = (f"🛍 <b>НОВЕ ЗАМОВЛЕННЯ!</b>\n"
                  f"⠀👟 <b>{user_data['item']}</b>\n"
                  f"⠀🆔 Артикул: <code>{user_data['article']}</code>\n"
                  f"⠀👤 Клієнт: {user_data['fio']}\n"
-                 f"⠀📱 Тел: <code>{user_data['phone']}</code>\n"
+                 f"⠀📱 Тел: <code>{phone_formatted}</code>\n"
                  f"⠀✈️ НП: {user_data['delivery']}\n"
                  f"⠀🔗 Юзернейм: {username}")
 
-    # Створюємо інлайн-кнопку для переходу в чат
-    admin_kb = types.InlineKeyboardMarkup()
+    admin_kb = types.InlineKeyboardMarkup(row_width=1)
     chat_url = f"https://t.me/{message.from_user.username}" if message.from_user.username else f"tg://user?id={user_id}"
-    admin_kb.add(types.InlineKeyboardButton("💬 Відкрити чат з клієнтом", url=chat_url))
+    
+    btn_chat = types.InlineKeyboardButton("💬 Чат з клієнтом", url=chat_url)
+    btn_call = types.InlineKeyboardButton("📞 Зателефонувати", url=f"tel:{phone_formatted}")
+    
+    admin_kb.add(btn_chat, btn_call)
 
     for admin in ADMIN_IDS:
         try: 
@@ -250,7 +255,7 @@ async def get_delivery(message: types.Message, state: FSMContext):
         f"⠀👟 Товар: <b>{user_data['item']}</b>\n"
         f"⠀💰 Ціна: <b>{user_data['price']} грн</b>\n"
         f"⠀👤 Отримувач: {user_data['fio']}\n"
-        f"⠀📱 Телефон: {user_data['phone']}\n"
+        f"⠀📱 Телефон: {phone_formatted}\n"
         f"⠀✈️ Доставка: {user_data['delivery']}\n"
         f"───────────────────\n\n"
         f"🚀 Менеджер зв'яжеться з тобою найближчим часом!"
