@@ -216,10 +216,6 @@ async def get_delivery(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     username = f"@{message.from_user.username}" if message.from_user.username else "Приховано"
     
-    # Створюємо посилання двома способами для надійності
-    user_link = f"https://t.me/user?id={user_id}" 
-    mention = f"<a href='tg://user?id={user_id}'>КЛІК СЮДИ</a>"
-
     # 1. Відправка в GAS
     try: 
         requests.post(GAS_URL, json=user_data, timeout=5)
@@ -231,15 +227,18 @@ async def get_delivery(message: types.Message, state: FSMContext):
                  f"⠀👟 <b>{user_data['item']}</b>\n"
                  f"⠀🆔 Артикул: <code>{user_data['article']}</code>\n"
                  f"⠀👤 Клієнт: {user_data['fio']}\n"
-                 f"⠀📱 Тел: {user_data['phone']}\n"
+                 f"⠀📱 Тел: <code>{user_data['phone']}</code>\n"
                  f"⠀✈️ НП: {user_data['delivery']}\n"
-                 f"⠀🔗 Зв'язок: {username}\n"
-                 f"⠀📱 Чат з клієнтом: {mention}\n"
-                 f"⠀🔗 Пряме посилання: {user_link}")
+                 f"⠀🔗 Юзернейм: {username}")
+
+    # Створюємо інлайн-кнопку для переходу в чат
+    admin_kb = types.InlineKeyboardMarkup()
+    chat_url = f"https://t.me/{message.from_user.username}" if message.from_user.username else f"tg://user?id={user_id}"
+    admin_kb.add(types.InlineKeyboardButton("💬 Відкрити чат з клієнтом", url=chat_url))
 
     for admin in ADMIN_IDS:
         try: 
-            await bot.send_message(admin, admin_msg, parse_mode="HTML", disable_web_page_preview=True)
+            await bot.send_message(admin, admin_msg, parse_mode="HTML", reply_markup=admin_kb)
         except Exception as e:
             logging.error(f"Admin notify error: {e}")
         
