@@ -29,10 +29,13 @@ def get_product_navigation(index, total, article):
     btn_next = InlineKeyboardButton(text="➡️", callback_data=f"next_{index}")
     keyboard.row(btn_prev, btn_count, btn_next)
 
-    # Ряд 2: Купити
+    # Ряд 2: Опис (НОВА КНОПКА)
+    keyboard.row(InlineKeyboardButton(text="📝 ОПИС ТА СКЛАД", callback_data=f"descr_{article}"))
+
+    # Ряд 3: Купити
     keyboard.row(InlineKeyboardButton(text="💎 ЗАМОВИТИ ЦЮ МОДЕЛЬ 💎", callback_data=f"buy_{index}"))
 
-    # Ряд 3: Сервіс (ВАЖЛИВО: callback_data для сітки має бути "show_grid_alert")
+    # Ряд 4: Сервіс
     btn_photos = InlineKeyboardButton(text="📸 ВСІ ФОТО", callback_data=f"more_photos_{article}")
     btn_grid = InlineKeyboardButton(text="📐 РОЗМІРНА СІТКА", callback_data="show_grid_alert")
     keyboard.row(btn_photos, btn_grid)
