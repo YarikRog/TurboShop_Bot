@@ -4,6 +4,7 @@ import os, logging, asyncio
 from aiogram import Bot, Dispatcher, types, executor
 from aiogram.dispatcher import FSMContext
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 import database as db
 import keyboards as kb
@@ -28,7 +29,7 @@ async def update_cache_task():
         except: pass
         await asyncio.sleep(60)
 
-# --- НОВИЙ ОБРОБНИК ОПИСУ (ТІЛЬКИ ЦЕ ДОДАНО) ---
+# --- НОВИЙ ОБРОБНИК ОПИСУ ---
 @dp.callback_query_handler(lambda c: c.data.startswith('descr_'), state="*")
 async def descr_h(c: types.CallbackQuery):
     article = c.data.replace("descr_", "")
@@ -47,9 +48,37 @@ async def send_welcome(m: types.Message, state: FSMContext):
     users.register_user(m.from_user.id, m.from_user.username, "Direct")
     await m.answer("Вітаємо у TurboShop! 👟", reply_markup=kb.main_menu())
 
+# --- ОНОВЛЕНИЙ МЕНЕДЖЕР (ЗА ТВОЇМ ЗАПИТОМ) ---
 @dp.message_handler(lambda m: m.text == "💬 Менеджер", state="*")
 async def manager_h(m: types.Message):
-    await m.answer("Питання? Пиши: @yarik721 👨‍💻")
+    admin_ids = os.getenv("ADMIN_IDS", "").split(',')
+    
+    text = (
+        "<b>Маєш запитання чи потрібна допомога з підбором?</b> 🤔\n\n"
+        "Наші менеджери вже на низькому старті, щоб знайти твою ідеальну пару! "
+        "Тисни на кнопку нижче, щоб розпочати чат: 👇"
+    )
+    
+    markup = InlineKeyboardMarkup(row_width=1)
+    
+    for admin_id in admin_ids:
+        admin_id = admin_id.strip()
+        if not admin_id: continue
+        
+        try:
+            chat = await bot.get_chat(admin_id)
+            name = chat.first_name if chat.first_name else "Менеджер"
+            user_nick = chat.username
+            
+            if user_nick:
+                markup.add(InlineKeyboardButton(
+                    text=f"👨‍💻 Написати {name}", 
+                    url=f"https://t.me/{user_nick}")
+                )
+        except Exception as e:
+            continue
+            
+    await m.answer(text, reply_markup=markup, parse_mode="HTML")
 
 @dp.message_handler(lambda m: m.text in ["🏠 Головне меню", "⬅️ Назад"], state="*")
 async def home_h(m: types.Message, state: FSMContext):
@@ -66,7 +95,6 @@ async def brands_h(m): await catalog.show_brands(m, user_products, ALL_PRODUCTS)
 @dp.message_handler(lambda m: m.text.startswith("🔹 "))
 async def size_h(m): await catalog.choose_size(m, user_products, ALL_PRODUCTS)
 
-# ПОВЕРНУВ ТВІЙ ОРИГІНАЛЬНИЙ ПОШУК СИМВОЛ В СИМВОЛ
 @dp.callback_query_handler(lambda c: c.data.startswith('size_'), state="*")
 async def start_cat_h(c: types.CallbackQuery):
     size = c.data.replace("size_", "")
