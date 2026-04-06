@@ -28,7 +28,7 @@ async def update_cache_task():
         except: pass
         await asyncio.sleep(60)
 
-# --- НОВИЙ ОБРОБНИК ОПИСУ ---
+# --- НОВИЙ ОБРОБНИК ОПИСУ (ТІЛЬКИ ЦЕ ДОДАНО) ---
 @dp.callback_query_handler(lambda c: c.data.startswith('descr_'), state="*")
 async def descr_h(c: types.CallbackQuery):
     article = c.data.replace("descr_", "")
@@ -66,6 +66,7 @@ async def brands_h(m): await catalog.show_brands(m, user_products, ALL_PRODUCTS)
 @dp.message_handler(lambda m: m.text.startswith("🔹 "))
 async def size_h(m): await catalog.choose_size(m, user_products, ALL_PRODUCTS)
 
+# ПОВЕРНУВ ТВІЙ ОРИГІНАЛЬНИЙ ПОШУК СИМВОЛ В СИМВОЛ
 @dp.callback_query_handler(lambda c: c.data.startswith('size_'), state="*")
 async def start_cat_h(c: types.CallbackQuery):
     size = c.data.replace("size_", "")
