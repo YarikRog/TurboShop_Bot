@@ -23,9 +23,12 @@ async def update_cache_task():
     while True:
         try:
             data = db.get_all_items()
-            if data: ALL_PRODUCTS = data
+            if data: 
+                ALL_PRODUCTS = data
+                # logging.info("✅ База товарів оновлена")
         except: pass
-        await asyncio.sleep(600)
+        # Оновлюємо кожну хвилину (60 сек), щоб ціни завжди були актуальні
+        await asyncio.sleep(60)
 
 # --- СЛУЖБОВІ ТА СТАРТ ---
 @dp.message_handler(commands=['start'], state="*")
@@ -72,6 +75,7 @@ async def start_cat_h(c: types.CallbackQuery):
 async def pag_h(c: types.CallbackQuery):
     action, idx = c.data.split('_')
     new_idx = int(idx) + 1 if action == 'next' else int(idx) - 1
+    # Викликаємо show_product, де вже працює наш запобіжник індексів
     await catalog.show_product(bot, c.from_user.id, new_idx, user_products, ALL_PRODUCTS, c.message.message_id)
 
 @dp.callback_query_handler(lambda c: c.data.startswith('more_photos_'), state="*")
@@ -81,7 +85,6 @@ async def photos_h(c: types.CallbackQuery):
 # --- ЗАМОВЛЕННЯ ---
 @dp.callback_query_handler(lambda c: c.data.startswith('buy_'), state="*")
 async def buy_h(c, state): 
-    # Передаємо ALL_PRODUCTS, щоб функція могла витягнути фото товару для чеку
     await order.process_buy(c, state, user_products, ALL_PRODUCTS)
 
 @dp.message_handler(content_types=['contact'], state=order.OrderState.waiting_for_phone)
