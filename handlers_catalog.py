@@ -25,21 +25,30 @@ async def show_product(bot, user_id, index, user_products, ALL_PRODUCTS, message
     
     photos = db.get_product_photos(ALL_PRODUCTS, product.get('Артикул'))
     
-    # ПЕРЕВІРКА НА ПУСТЕ ФОТО
-    if not photos or not str(photos[0]).strip() or str(photos[0]) == "None":
-        photo = "https://via.placeholder.com/500x500.png?text=TurboShop+Photo"
-    else:
-        photo = photos[0]
+    # ІГНОР ПУСТОГО ФОТО: Перевіряємо посилання
+    photo = photos[0] if photos and str(photos[0]).strip() != "None" and str(photos[0]).strip() != "" else None
 
     markup = kb.get_product_navigation(index, total, product.get('Артикул'))
 
     if message_to_edit:
         try:
-            media = types.InputMediaPhoto(photo, caption=caption, parse_mode="HTML")
-            await bot.edit_message_media(chat_id=user_id, message_id=message_to_edit, media=media, reply_markup=markup)
-        except: pass
+            if photo:
+                media = types.InputMediaPhoto(photo, caption=caption, parse_mode="HTML")
+                await bot.edit_message_media(chat_id=user_id, message_id=message_to_edit, media=media, reply_markup=markup)
+            else:
+                # Якщо фото немає, а треба редагувати (міняємо фото на текст)
+                await bot.send_message(user_id, f"🖼 (Фото очікується)\n\n{caption}", parse_mode="HTML", reply_markup=markup)
+        except:
+            await bot.send_message(user_id, caption, parse_mode="HTML", reply_markup=markup)
     else:
-        await bot.send_photo(user_id, photo, caption=caption, parse_mode="HTML", reply_markup=markup)
+        try:
+            if photo:
+                await bot.send_photo(user_id, photo, caption=caption, parse_mode="HTML", reply_markup=markup)
+            else:
+                # Просто шлемо текст, якщо в таблиці дирка замість фото
+                await bot.send_message(user_id, f"🖼 (Фото очікується)\n\n{caption}", parse_mode="HTML", reply_markup=markup)
+        except:
+            await bot.send_message(user_id, caption, parse_mode="HTML", reply_markup=markup)
 
 async def show_more_photos(callback_query, user_products, ALL_PRODUCTS, bot):
     user_id = callback_query.from_user.id
@@ -52,6 +61,9 @@ async def show_more_photos(callback_query, user_products, ALL_PRODUCTS, bot):
         user_products[user_id]['last_album_ids'] = []
 
     photos = db.get_product_photos(ALL_PRODUCTS, article)
+    # ІГНОР: Фільтруємо пусті посилання в альбомі
+    photos = [p for p in photos if p and str(p).strip() != "None" and str(p).strip() != ""]
+    
     if not photos or len(photos) <= 1:
         await bot.answer_callback_query(callback_query.id, text="Більше фото немає", show_alert=True)
         return
