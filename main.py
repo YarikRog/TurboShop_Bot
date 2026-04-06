@@ -81,7 +81,8 @@ async def photos_h(c: types.CallbackQuery):
 # --- ЗАМОВЛЕННЯ ---
 @dp.callback_query_handler(lambda c: c.data.startswith('buy_'), state="*")
 async def buy_h(c, state): 
-    await order.process_buy(c, state, user_products)
+    # Передаємо ALL_PRODUCTS, щоб функція могла витягнути фото товару для чеку
+    await order.process_buy(c, state, user_products, ALL_PRODUCTS)
 
 @dp.message_handler(content_types=['contact'], state=order.OrderState.waiting_for_phone)
 async def phone_h(m, state): 
