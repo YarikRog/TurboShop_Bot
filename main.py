@@ -27,7 +27,7 @@ async def update_cache_task():
         except: pass
         await asyncio.sleep(600)
 
-# --- СТАРТ ТА МЕНЕДЖЕР ---
+# --- СЛУЖБОВІ ТА СТАРТ ---
 @dp.message_handler(commands=['start'], state="*")
 async def send_welcome(m: types.Message, state: FSMContext):
     await state.finish()
@@ -59,25 +59,41 @@ async def start_cat_h(c: types.CallbackQuery):
     u_id = c.from_user.id
     if u_id not in user_products: user_products[u_id] = {'last_album_ids': []}
     user_products[u_id]['size'] = size
-    products = [i for i in ALL_PRODUCTS if i.get('Категорія') == user_products[u_id].get('category') 
-                and i.get('Бренд') == user_products[u_id].get('brand') and size in str(i.get('Розміри'))]
+    cat = user_products[u_id].get('category')
+    brd = user_products[u_id].get('brand')
+    products = [i for i in ALL_PRODUCTS if i.get('Категорія') == cat and i.get('Бренд') == brd and size in str(i.get('Розміри'))]
     user_products[u_id]['products'] = products
     if not products:
         await bot.answer_callback_query(c.id, text="Немає в наявності.", show_alert=True)
         return
     await catalog.show_product(bot, u_id, 0, user_products, ALL_PRODUCTS)
 
-# --- ПАГІНАЦІЯ ТА ЗАМОВЛЕННЯ ---
 @dp.callback_query_handler(lambda c: c.data.startswith(('next_', 'prev_')), state="*")
 async def pag_h(c: types.CallbackQuery):
     action, idx = c.data.split('_')
     new_idx = int(idx) + 1 if action == 'next' else int(idx) - 1
     await catalog.show_product(bot, c.from_user.id, new_idx, user_products, ALL_PRODUCTS, c.message.message_id)
 
-@dp.callback_query_handler(lambda c: c.data.startswith('buy_'), state="*")
-async def buy_h(c, state): await order.process_buy(c, state, user_products)
+@dp.callback_query_handler(lambda c: c.data.startswith('more_photos_'), state="*")
+async def photos_h(c: types.CallbackQuery):
+    await catalog.show_more_photos(c, user_products, ALL_PRODUCTS, bot)
 
-# (Додай сюди решту хендлерів для контактів, ПІБ та доставки, як у попередньому кроці)
+# --- ЗАМОВЛЕННЯ ---
+@dp.callback_query_handler(lambda c: c.data.startswith('buy_'), state="*")
+async def buy_h(c, state): 
+    await order.process_buy(c, state, user_products)
+
+@dp.message_handler(content_types=['contact'], state=order.OrderState.waiting_for_phone)
+async def phone_h(m, state): 
+    await order.get_phone(m, state)
+
+@dp.message_handler(state=order.OrderState.waiting_for_fio)
+async def fio_h(m, state): 
+    await order.get_fio(m, state)
+
+@dp.message_handler(state=order.OrderState.waiting_for_delivery)
+async def deliv_h(m, state): 
+    await order.get_delivery(m, state, bot)
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
