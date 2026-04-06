@@ -8,6 +8,12 @@ async def show_product(bot, user_id, index, user_products, ALL_PRODUCTS, message
         await bot.send_message(user_id, "⚠️ Дані застаріли. Почни заново з меню.", reply_markup=kb.main_menu())
         return
 
+    # ЗАПОБІЖНИК: перевіряємо, щоб індекс не виходив за межі списку товарів
+    if index < 0: 
+        index = 0
+    elif index >= len(data['products']): 
+        index = len(data['products']) - 1
+    
     product = data['products'][index]
     total = len(data['products'])
     
@@ -34,7 +40,6 @@ async def show_more_photos(callback_query, user_products, ALL_PRODUCTS, bot):
     user_id = callback_query.from_user.id
     article = callback_query.data.replace("more_photos_", "")
     
-    # Видаляємо старі альбоми, якщо вони були
     if user_id in user_products and 'last_album_ids' in user_products[user_id]:
         for msg_id in user_products[user_id]['last_album_ids']:
             try: await bot.delete_message(user_id, msg_id)
