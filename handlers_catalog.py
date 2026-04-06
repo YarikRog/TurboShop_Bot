@@ -8,7 +8,6 @@ async def show_product(bot, user_id, index, user_products, ALL_PRODUCTS, message
         await bot.send_message(user_id, "⚠️ Дані застаріли. Почни заново з меню.", reply_markup=kb.main_menu())
         return
 
-    # ЗАПОБІЖНИК: перевіряємо, щоб індекс не виходив за межі списку товарів
     if index < 0: 
         index = 0
     elif index >= len(data['products']): 
@@ -25,7 +24,13 @@ async def show_product(bot, user_id, index, user_products, ALL_PRODUCTS, message
     )
     
     photos = db.get_product_photos(ALL_PRODUCTS, product.get('Артикул'))
-    photo = photos[0] if photos else "https://via.placeholder.com/500"
+    
+    # ПЕРЕВІРКА НА ПУСТЕ ФОТО
+    if not photos or not str(photos[0]).strip() or str(photos[0]) == "None":
+        photo = "https://via.placeholder.com/500x500.png?text=TurboShop+Photo"
+    else:
+        photo = photos[0]
+
     markup = kb.get_product_navigation(index, total, product.get('Артикул'))
 
     if message_to_edit:
