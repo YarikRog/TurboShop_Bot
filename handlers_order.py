@@ -1,6 +1,7 @@
 import os
 import logging
 import requests
+import asyncio
 from aiogram import types
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
@@ -19,11 +20,13 @@ async def process_buy(callback_query: types.CallbackQuery, state: FSMContext, us
     index = int(callback_query.data.split('_')[1])
     user_id = callback_query.from_user.id
     
-    if user_id not in user_products:
-        await callback_query.answer("⚠️ Помилка сесії. Почніть заново.", show_alert=True)
+    # БЕРЕМО ДАНІ БЕЗПЕЧНО
+    user_data_items = user_products.get(user_id, {}).get('products', [])
+    if not user_data_items or index >= len(user_data_items):
+        await callback_query.answer("⚠️ Помилка даних. Оберіть товар знову.", show_alert=True)
         return
         
-    product = user_products[user_id]['products'][index]
+    product = user_data_items[index]
     photos = db.get_product_photos(ALL_PRODUCTS, product.get('Артикул'))
     main_photo = photos[0] if photos else "https://via.placeholder.com/500"
 
@@ -31,7 +34,8 @@ async def process_buy(callback_query: types.CallbackQuery, state: FSMContext, us
         item=f"{product.get('Бренд')} {product.get('Модель')}", 
         article=str(product.get('Артикул', '—')), 
         price=str(product.get('Ціна', '0')),
-        photo=main_photo
+        photo=main_photo,
+        size=user_products.get(user_id, {}).get('size', 'Не вказано')
     )
     
     await OrderState.waiting_for_phone.set()
@@ -52,81 +56,64 @@ async def get_fio(message: types.Message, state: FSMContext):
 
 async def get_delivery(message: types.Message, state: FSMContext, bot):
     await state.update_data(delivery=message.text)
-    user_data = await state.get_data()
+    data = await state.get_data()
     user_id = message.from_user.id
     
-    raw_username = message.from_user.username
-    final_username = f"@{raw_username}" if raw_username else f"ID: {user_id}"
-    
-    raw_phone = str(user_data.get('phone', ''))
-    clean_phone = "".join(filter(str.isdigit, raw_phone))
-    if not clean_phone.startswith('38') and len(clean_phone) <= 10:
-        clean_phone = f"38{clean_phone}"
-    phone_formatted = f"+{clean_phone}"
+    # Форматуємо телефон
+    phone = "".join(filter(str.isdigit, str(data.get('phone', ''))))
+    if not phone.startswith('38') and len(phone) <= 10: phone = f"38{phone}"
+    phone_link = f"+{phone}"
 
-    # Формуємо дані для повідомлень
-    item_name = user_data.get("item", "—")
-    price = user_data.get("price", "0")
-    article = user_data.get("article", "—")
-    fio = user_data.get("fio", "—")
-    delivery = user_data.get("delivery", "—")
+    username = f"@{message.from_user.username}" if message.from_user.username else f"ID: {user_id}"
 
-    # --- 1. ПОВІДОМЛЕННЯ АДМІНУ (ТОБІ) ---
-    admin_msg = (f"🛍 <b>НОВЕ ЗАМОВЛЕННЯ!</b>\n"
-                 f"───────────────────\n"
-                 f"⠀👟 <b>{item_name}</b>\n"
-                 f"⠀🆔 Артикул: <code>{article}</code>\n"
-                 f"⠀👤 Клієнт: {fio}\n"
-                 f"⠀📱 Тел: <code>{phone_formatted}</code>\n"
-                 f"⠀✈️ НП: {delivery}\n"
-                 f"⠀🔗 Юзер: {final_username}")
-
-    admin_kb = types.InlineKeyboardMarkup(row_width=1)
-    chat_link = f"https://t.me/{raw_username}" if raw_username else f"tg://user?id={user_id}"
-    admin_kb.add(
-        types.InlineKeyboardButton("💬 Чат з клієнтом", url=chat_link),
-        types.InlineKeyboardButton("📞 Зателефонувати", url=f"tel:{phone_formatted}")
-    )
-
-    for admin in ADMIN_IDS:
-        try:
-            await bot.send_message(admin, admin_msg, parse_mode="HTML", reply_markup=admin_kb)
-        except Exception as e:
-            logging.error(f"Помилка відправки адміну {admin}: {e}")
-
-    # --- 2. ПІДТВЕРДЖЕННЯ КЛІЄНТУ ---
-    client_msg = (
-        f"✅ <b>ВАШЕ ЗАМОВЛЕННЯ ПРИЙНЯТО!</b>\n\n"
-        f"<b>Деталі замовлення:</b>\n"
+    # --- КРОК 1: МИТТЄВЕ ПОВІДОМЛЕННЯ АДМІНУ ---
+    admin_text = (
+        f"🛍 <b>НОВЕ ЗАМОВЛЕННЯ!</b>\n"
         f"───────────────────\n"
-        f"⠀👟 Товар: <b>{item_name}</b>\n"
-        f"⠀💰 Ціна: <b>{price} грн</b>\n"
-        f"⠀👤 Отримувач: {fio}\n"
-        f"⠀📱 Телефон: {phone_formatted}\n"
-        f"⠀✈️ Доставка: {delivery}\n"
-        f"───────────────────\n\n"
-        f"🚀 Менеджер зв'яжеться з <b>Вами</b> найближчим часом!"
+        f"⠀👟 <b>{data.get('item')}</b>\n"
+        f"⠀🆔 Артикул: <code>{data.get('article')}</code>\n"
+        f"⠀📏 Розмір: <b>{data.get('size')}</b>\n"
+        f"⠀👤 Клієнт: {data.get('fio')}\n"
+        f"⠀📱 Тел: <code>{phone_link}</code>\n"
+        f"⠀✈️ НП: {data.get('delivery')}\n"
+        f"⠀🔗 Юзер: {username}"
     )
     
-    try:
-        await bot.send_photo(user_id, user_data.get('photo'), caption=client_msg, parse_mode="HTML", reply_markup=kb.main_menu())
-    except:
-        await message.answer(client_msg, parse_mode="HTML", reply_markup=kb.main_menu())
+    admin_kb = types.InlineKeyboardMarkup()
+    chat_url = f"https://t.me/{message.from_user.username}" if message.from_user.username else f"tg://user?id={user_id}"
+    admin_kb.add(types.InlineKeyboardButton("💬 Чат з клієнтом", url=chat_url))
+    admin_kb.add(types.InlineKeyboardButton("📞 Зателефонувати", url=f"tel:{phone_link}"))
 
-    # --- 3. ЗАПИС В ТАБЛИЦЮ (В ОСТАННЮ ЧЕРГУ) ---
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, admin_text, parse_mode="HTML", reply_markup=admin_kb)
+        except Exception as e:
+            logging.error(f"Адмін {admin_id} не отримав СМС: {e}")
+
+    # --- КРОК 2: ПІДТВЕРДЖЕННЯ КЛІЄНТУ ---
+    client_text = (
+        f"✅ <b>ВАШЕ ЗАМОВЛЕННЯ ПРИЙНЯТО!</b>\n\n"
+        f"⠀👟 Товар: {data.get('item')}\n"
+        f"⠀💰 Ціна: {data.get('price')} грн\n"
+        f"⠀📏 Розмір: {data.get('size')}\n"
+        f"───────────────────\n"
+        f"🚀 Менеджер зв'яжеться з Вами найближчим часом!"
+    )
+    try:
+        await bot.send_photo(user_id, data.get('photo'), caption=client_text, parse_mode="HTML", reply_markup=kb.main_menu())
+    except:
+        await message.answer(client_text, reply_markup=kb.main_menu())
+
+    # --- КРОК 3: ЗАПИС В ТАБЛИЦЮ (У ФОНІ) ---
     payload = {
-        "item": item_name,
-        "article": article,
-        "price": price,
-        "phone": phone_formatted,
-        "fio": fio,
-        "delivery": delivery,
-        "user": final_username
+        "item": data.get("item"), "article": data.get("article"), 
+        "price": data.get("price"), "phone": phone_link,
+        "fio": data.get("fio"), "delivery": data.get("delivery"), 
+        "user": username, "size": data.get("size")
     }
-    try: 
-        # Таймаут 20 секунд, щоб точно встигло
-        requests.post(GAS_URL, json=payload, timeout=20)
-    except Exception as e: 
-        logging.error(f"GAS Error: {e}")
-        
+    try:
+        requests.post(GAS_URL, json=payload, timeout=15)
+    except:
+        pass
+
     await state.finish()
