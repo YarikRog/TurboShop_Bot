@@ -48,10 +48,11 @@ async def send_welcome(m: types.Message, state: FSMContext):
     users.register_user(m.from_user.id, m.from_user.username, "Direct")
     await m.answer("Вітаємо у TurboShop! 👟", reply_markup=kb.main_menu())
 
-# --- ОНОВЛЕНИЙ МЕНЕДЖЕР (ЗА ТВОЇМ ЗАПИТОМ) ---
+# --- ОНОВЛЕНИЙ МЕНЕДЖЕР (ТЕПЕР ЧЕРЕЗ MANAGERS) ---
 @dp.message_handler(lambda m: m.text == "💬 Менеджер", state="*")
 async def manager_h(m: types.Message):
-    admin_ids = os.getenv("ADMIN_IDS", "").split(',')
+    # Тепер беремо ID саме зі змінної MANAGERS
+    manager_ids = os.getenv("MANAGERS", "").split(',')
     
     text = (
         "<b>Маєш запитання чи потрібна допомога з підбором?</b> 🤔\n\n"
@@ -61,12 +62,12 @@ async def manager_h(m: types.Message):
     
     markup = InlineKeyboardMarkup(row_width=1)
     
-    for admin_id in admin_ids:
-        admin_id = admin_id.strip()
-        if not admin_id: continue
+    for m_id in manager_ids:
+        m_id = m_id.strip()
+        if not m_id: continue
         
         try:
-            chat = await bot.get_chat(admin_id)
+            chat = await bot.get_chat(m_id)
             name = chat.first_name if chat.first_name else "Менеджер"
             user_nick = chat.username
             
