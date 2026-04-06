@@ -8,6 +8,7 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 import keyboards as kb
 import database as db
 
+# Зчитуємо ID адмінів та URL скрипта
 ADMIN_IDS = [int(i.strip()) for i in os.getenv("ADMIN_IDS", "").split(",") if i.strip()]
 GAS_URL = os.getenv("GAS_URL")
 
@@ -59,61 +60,89 @@ async def get_delivery(message: types.Message, state: FSMContext, bot):
     data = await state.get_data()
     user_id = message.from_user.id
     
+    # Підготовка даних для повідомлень
+    item_name = data.get("item", "—")
+    price = data.get("price", "0")
+    article = data.get("article", "—")
+    fio = data.get("fio", "—")
+    delivery = data.get("delivery", "—")
+    size = data.get("size", "—")
+    
+    raw_username = message.from_user.username
+    final_username = f"@{raw_username}" if raw_username else f"ID: {user_id}"
+    
     # Форматуємо телефон
-    phone = "".join(filter(str.isdigit, str(data.get('phone', ''))))
-    if not phone.startswith('38') and len(phone) <= 10: phone = f"38{phone}"
-    phone_link = f"+{phone}"
+    raw_phone = str(data.get('phone', ''))
+    clean_phone = "".join(filter(str.isdigit, raw_phone))
+    if not clean_phone.startswith('38') and len(clean_phone) <= 10:
+        clean_phone = f"38{clean_phone}"
+    phone_formatted = f"+{clean_phone}"
 
-    username = f"@{message.from_user.username}" if message.from_user.username else f"ID: {user_id}"
+    # --- 1. ПОВІДОМЛЕННЯ АДМІНУ (ТОБІ) ---
+    admin_msg = (f"🛍 <b>НОВЕ ЗАМОВЛЕННЯ!</b>\n"
+                 f"───────────────────\n"
+                 f"⠀👟 <b>{item_name}</b>\n"
+                 f"⠀🆔 Артикул: <code>{article}</code>\n"
+                 f"⠀📏 Розмір: <b>{size}</b>\n"
+                 f"⠀👤 Клієнт: {fio}\n"
+                 f"⠀📱 Тел: <code>{phone_formatted}</code>\n"
+                 f"⠀✈️ НП: {delivery}\n"
+                 f"⠀🔗 Юзер: {final_username}")
 
-    # --- КРОК 1: МИТТЄВЕ ПОВІДОМЛЕННЯ АДМІНУ ---
-    admin_text = (
-        f"🛍 <b>НОВЕ ЗАМОВЛЕННЯ!</b>\n"
+    admin_kb = types.InlineKeyboardMarkup(row_width=1)
+    chat_link = f"https://t.me/{raw_username}" if raw_username else f"tg://user?id={user_id}"
+    
+    # Очищуємо номер від усього, крім цифр і плюса на початку для URL
+    clean_phone_for_url = "+" + "".join(filter(str.isdigit, phone_formatted))
+    
+    admin_kb.add(
+        types.InlineKeyboardButton("💬 Чат з клієнтом", url=chat_link),
+        types.InlineKeyboardButton("📞 Зателефонувати", url=f"tel:{clean_phone_for_url}")
+    )
+
+    for admin in ADMIN_IDS:
+        try:
+            await bot.send_message(admin, admin_msg, parse_mode="HTML", reply_markup=admin_kb)
+            logging.info(f"✅ Адмін {admin} отримав сповіщення")
+        except Exception as e:
+            logging.error(f"Помилка кнопок: {e}. Відправляю текст без кнопок.")
+            # ПЛАН Б: Відправка замовлення просто текстом, якщо кнопки зламалися
+            await bot.send_message(admin, admin_msg + f"\n\n📞 Тел для зв'язку: {phone_formatted}", parse_mode="HTML")
+
+    # --- 2. ПІДТВЕРДЖЕННЯ КЛІЄНТУ ---
+    client_msg = (
+        f"✅ <b>ВАШЕ ЗАМОВЛЕННЯ ПРИЙНЯТО!</b>\n\n"
+        f"<b>Деталі замовлення:</b>\n"
         f"───────────────────\n"
-        f"⠀👟 <b>{data.get('item')}</b>\n"
-        f"⠀🆔 Артикул: <code>{data.get('article')}</code>\n"
-        f"⠀📏 Розмір: <b>{data.get('size')}</b>\n"
-        f"⠀👤 Клієнт: {data.get('fio')}\n"
-        f"⠀📱 Тел: <code>{phone_link}</code>\n"
-        f"⠀✈️ НП: {data.get('delivery')}\n"
-        f"⠀🔗 Юзер: {username}"
+        f"⠀👟 Товар: <b>{item_name}</b>\n"
+        f"⠀💰 Ціна: <b>{price} грн</b>\n"
+        f"⠀📏 Розмір: <b>{size}</b>\n"
+        f"⠀👤 Отримувач: {fio}\n"
+        f"⠀📱 Телефон: {phone_formatted}\n"
+        f"⠀✈️ Доставка: {delivery}\n"
+        f"───────────────────\n\n"
+        f"🚀 Менеджер зв'яжеться з <b>Вами</b> найближчим часом!"
     )
     
-    admin_kb = types.InlineKeyboardMarkup()
-    chat_url = f"https://t.me/{message.from_user.username}" if message.from_user.username else f"tg://user?id={user_id}"
-    admin_kb.add(types.InlineKeyboardButton("💬 Чат з клієнтом", url=chat_url))
-    admin_kb.add(types.InlineKeyboardButton("📞 Зателефонувати", url=f"tel:{phone_link}"))
-
-    for admin_id in ADMIN_IDS:
-        try:
-            await bot.send_message(admin_id, admin_text, parse_mode="HTML", reply_markup=admin_kb)
-        except Exception as e:
-            logging.error(f"Адмін {admin_id} не отримав СМС: {e}")
-
-    # --- КРОК 2: ПІДТВЕРДЖЕННЯ КЛІЄНТУ ---
-    client_text = (
-        f"✅ <b>ВАШЕ ЗАМОВЛЕННЯ ПРИЙНЯТО!</b>\n\n"
-        f"⠀👟 Товар: {data.get('item')}\n"
-        f"⠀💰 Ціна: {data.get('price')} грн\n"
-        f"⠀📏 Розмір: {data.get('size')}\n"
-        f"───────────────────\n"
-        f"🚀 Менеджер зв'яжеться з Вами найближчим часом!"
-    )
     try:
-        await bot.send_photo(user_id, data.get('photo'), caption=client_text, parse_mode="HTML", reply_markup=kb.main_menu())
+        await bot.send_photo(user_id, data.get('photo'), caption=client_msg, parse_mode="HTML", reply_markup=kb.main_menu())
     except:
-        await message.answer(client_text, reply_markup=kb.main_menu())
+        await message.answer(client_msg, parse_mode="HTML", reply_markup=kb.main_menu())
 
-    # --- КРОК 3: ЗАПИС В ТАБЛИЦЮ (У ФОНІ) ---
+    # --- 3. ЗАПИС В ТАБЛИЦЮ (У ФОНІ) ---
     payload = {
-        "item": data.get("item"), "article": data.get("article"), 
-        "price": data.get("price"), "phone": phone_link,
-        "fio": data.get("fio"), "delivery": data.get("delivery"), 
-        "user": username, "size": data.get("size")
+        "item": item_name,
+        "article": article,
+        "price": price,
+        "phone": phone_formatted,
+        "fio": fio,
+        "delivery": delivery,
+        "user": final_username,
+        "size": size
     }
-    try:
-        requests.post(GAS_URL, json=payload, timeout=15)
-    except:
-        pass
-
+    try: 
+        requests.post(GAS_URL, json=payload, timeout=20)
+    except Exception as e: 
+        logging.error(f"GAS Error: {e}")
+        
     await state.finish()
