@@ -8,6 +8,9 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 import keyboards as kb
 import database as db
 
+# Логування для відстеження замовлень
+logger = logging.getLogger(__name__)
+
 # Зчитуємо ID адмінів та URL скрипта
 ADMIN_IDS = [int(i.strip()) for i in os.getenv("ADMIN_IDS", "").split(",") if i.strip()]
 GAS_URL = os.getenv("GAS_URL")
@@ -17,50 +20,72 @@ class OrderState(StatesGroup):
     waiting_for_fio = State()
     waiting_for_delivery = State()
 
-async def process_buy(callback_query: types.CallbackQuery, state: FSMContext, user_products, ALL_PRODUCTS):
+async def process_buy(callback_query: types.CallbackQuery, state: FSMContext, ALL_PRODUCTS):
+    # Тепер ми не передаємо індекс через аргумент, а беремо його або ставимо дефолт
     index = int(callback_query.data.split('_')[1])
     user_id = callback_query.from_user.id
     
-    # БЕРЕМО ДАНІ БЕЗПЕЧНО
-    user_data_items = user_products.get(user_id, {}).get('products', [])
-    if not user_data_items or index >= len(user_data_items):
-        await callback_query.answer("⚠️ Помилка даних. Оберіть товар знову.", show_alert=True)
+    # ДІСТАЄМО ДАНІ З ТВОГО НОВОГО REDIS (FSM)
+    user_data = await state.get_data()
+    product_ids = user_data.get('product_ids', [])
+    selected_size = user_data.get('size', 'Не вказано')
+
+    if not product_ids or index >= len(product_ids):
+        await callback_query.answer("⚠️ Помилка сесії. Оберіть товар знову.", show_alert=True)
         return
-        
-    product = user_data_items[index]
-    photos = db.get_product_photos(ALL_PRODUCTS, product.get('Артикул'))
+    
+    # Отримуємо товар з кешу в main.py (імпортуємо акуратно)
+    from main import cache
+    article = product_ids[index]
+    product = cache.get_by_id(article)
+
+    if not product:
+        await callback_query.answer("❌ Товар більше не доступний.", show_alert=True)
+        return
+
+    # Готуємо фото для підтвердження
+    photo_field = product.get('Фото', '')
+    photos = [p.strip() for p in photo_field.split(',') if p.strip() not in ["", "None"]]
     main_photo = photos[0] if photos else "https://via.placeholder.com/500"
 
+    # Зберігаємо все необхідне для замовлення в стан
     await state.update_data(
         item=f"{product.get('Бренд')} {product.get('Модель')}", 
-        article=str(product.get('Артикул', '—')), 
+        article=str(article), 
         price=str(product.get('Ціна', '0')),
         photo=main_photo,
-        size=user_products.get(user_id, {}).get('size', 'Не вказано')
+        size=selected_size
     )
     
     await OrderState.waiting_for_phone.set()
-    await callback_query.message.answer("🚀 Поділіться номером телефону за допомогою кнопки:", reply_markup=kb.get_contact_keyboard())
+    await callback_query.message.answer(
+        "🚀 Залишилося зовсім трохи!\nПоділися номером телефону за допомогою кнопки нижче: 👇", 
+        reply_markup=kb.get_contact_keyboard()
+    )
 
 async def get_phone(message: types.Message, state: FSMContext):
     if not message.contact:
-        await message.answer("Будь ласка, натисніть на кнопку 'Надіслати контакт' 👇")
+        await message.answer("Будь ласка, натисни на кнопку 'Надіслати контакт' 📱")
         return
+        
     await state.update_data(phone=message.contact.phone_number)
     await OrderState.next()
-    await message.answer("✅ Тепер вкажіть ПІБ отримувача:", reply_markup=types.ReplyKeyboardRemove())
+    await message.answer("✅ Прийнято! Тепер напиши ПІБ отримувача:", reply_markup=types.ReplyKeyboardRemove())
 
 async def get_fio(message: types.Message, state: FSMContext):
+    if len(message.text) < 5:
+        await message.answer("Напиши, будь ласка, повне ПІБ (Прізвище, Ім'я, По батькові)")
+        return
     await state.update_data(fio=message.text)
     await OrderState.next()
-    await message.answer("📦 Місто та № відділення Нової Пошти:")
+    await message.answer("📦 Вкажи місто та № відділення Нової Пошти:")
 
 async def get_delivery(message: types.Message, state: FSMContext, bot):
     await state.update_data(delivery=message.text)
     data = await state.get_data()
     user_id = message.from_user.id
     
-    # Підготовка даних для повідомлень
+    # Витягуємо дані для фіналізації
     item_name = data.get("item", "—")
     price = data.get("price", "0")
     article = data.get("article", "—")
@@ -68,60 +93,53 @@ async def get_delivery(message: types.Message, state: FSMContext, bot):
     delivery = data.get("delivery", "—")
     size = data.get("size", "—")
     
-    raw_username = message.from_user.username
-    final_username = f"@{raw_username}" if raw_username else f"ID: {user_id}"
+    username = message.from_user.username
+    user_display = f"@{username}" if username else f"ID: {user_id}"
     
-    # Форматуємо телефон
-    raw_phone = str(data.get('phone', ''))
-    clean_phone = "".join(filter(str.isdigit, raw_phone))
-    if not clean_phone.startswith('38') and len(clean_phone) <= 10:
-        clean_phone = f"38{clean_phone}"
-    phone_formatted = f"+{clean_phone}"
+    # Форматування телефону
+    phone = "".join(filter(str.isdigit, str(data.get('phone', ''))))
+    if not phone.startswith('38') and len(phone) == 10:
+        phone = f"38{phone}"
+    phone_formatted = f"+{phone}"
 
-    # --- 1. ПОВІДОМЛЕННЯ АДМІНУ (ТОБІ) ---
-    admin_msg = (f"🛍 <b>НОВЕ ЗАМОВЛЕННЯ!</b>\n"
-                 f"───────────────────\n"
-                 f"⠀👟 <b>{item_name}</b>\n"
-                 f"⠀🆔 Артикул: <code>{article}</code>\n"
-                 f"⠀📏 Розмір: <b>{size}</b>\n"
-                 f"⠀👤 Клієнт: {fio}\n"
-                 f"⠀📱 Тел: <code>{phone_formatted}</code>\n"
-                 f"⠀✈️ НП: {delivery}\n"
-                 f"⠀🔗 Юзер: {final_username}")
+    # --- 1. СПОВІЩЕННЯ АДМІНІВ (Беремо з MANAGERS або ADMIN_IDS) ---
+    # Поки що шлемо на ADMIN_IDS, як ти і просив для тестів
+    admin_msg = (
+        f"🛍 <b>НОВЕ ЗАМОВЛЕННЯ!</b>\n"
+        f"───────────────────\n"
+        f"⠀👟 <b>{item_name}</b>\n"
+        f"⠀🆔 Артикул: <code>{article}</code>\n"
+        f"⠀📏 Розмір: <b>{size}</b>\n\n"
+        f"👤 Клієнт: {fio}\n"
+        f"📱 Тел: <code>{phone_formatted}</code>\n"
+        f"✈️ НП: {delivery}\n"
+        f"🔗 Юзер: {user_display}"
+    )
 
     admin_kb = types.InlineKeyboardMarkup(row_width=1)
-    chat_link = f"https://t.me/{raw_username}" if raw_username else f"tg://user?id={user_id}"
-    
-    # Очищуємо номер від усього, крім цифр і плюса на початку для URL
-    clean_phone_for_url = "+" + "".join(filter(str.isdigit, phone_formatted))
+    chat_link = f"https://t.me/{username}" if username else f"tg://user?id={user_id}"
     
     admin_kb.add(
         types.InlineKeyboardButton("💬 Чат з клієнтом", url=chat_link),
-        types.InlineKeyboardButton("📞 Зателефонувати", url=f"tel:{clean_phone_for_url}")
+        types.InlineKeyboardButton("📞 Зателефонувати", url=f"tel:{phone_formatted}")
     )
 
     for admin in ADMIN_IDS:
         try:
             await bot.send_message(admin, admin_msg, parse_mode="HTML", reply_markup=admin_kb)
-            logging.info(f"✅ Адмін {admin} отримав сповіщення")
         except Exception as e:
-            logging.error(f"Помилка кнопок: {e}. Відправляю текст без кнопок.")
-            # ПЛАН Б: Відправка замовлення просто текстом, якщо кнопки зламалися
-            await bot.send_message(admin, admin_msg + f"\n\n📞 Тел для зв'язку: {phone_formatted}", parse_mode="HTML")
+            logger.error(f"Помилка відправки адміну {admin}: {e}")
 
     # --- 2. ПІДТВЕРДЖЕННЯ КЛІЄНТУ ---
     client_msg = (
-        f"✅ <b>ВАШЕ ЗАМОВЛЕННЯ ПРИЙНЯТО!</b>\n\n"
-        f"<b>Деталі замовлення:</b>\n"
+        f"✅ <b>ДЯКУЄМО! ЗАМОВЛЕННЯ ПРИЙНЯТО!</b>\n\n"
+        f"<b>Твій вибір:</b>\n"
         f"───────────────────\n"
-        f"⠀👟 Товар: <b>{item_name}</b>\n"
-        f"⠀💰 Ціна: <b>{price} грн</b>\n"
+        f"⠀👟 Модель: <b>{item_name}</b>\n"
+        f"⠀💰 До сплати: <b>{price} грн</b>\n"
         f"⠀📏 Розмір: <b>{size}</b>\n"
-        f"⠀👤 Отримувач: {fio}\n"
-        f"⠀📱 Телефон: {phone_formatted}\n"
-        f"⠀✈️ Доставка: {delivery}\n"
         f"───────────────────\n\n"
-        f"🚀 Менеджер зв'яжеться з <b>Вами</b> найближчим часом!"
+        f"🚀 Менеджер вже обробляє заявку і скоро зв'яжеться з тобою!"
     )
     
     try:
@@ -129,7 +147,7 @@ async def get_delivery(message: types.Message, state: FSMContext, bot):
     except:
         await message.answer(client_msg, parse_mode="HTML", reply_markup=kb.main_menu())
 
-    # --- 3. ЗАПИС В ТАБЛИЦЮ (У ФОНІ) ---
+    # --- 3. ЗАПИС В ТАБЛИЦЮ ---
     payload = {
         "item": item_name,
         "article": article,
@@ -137,12 +155,17 @@ async def get_delivery(message: types.Message, state: FSMContext, bot):
         "phone": phone_formatted,
         "fio": fio,
         "delivery": delivery,
-        "user": final_username,
+        "user": user_display,
         "size": size
     }
-    try: 
-        requests.post(GAS_URL, json=payload, timeout=20)
-    except Exception as e: 
-        logging.error(f"GAS Error: {e}")
+    
+    # Використовуємо асинхронний запит, щоб бот не "зависав" на час відповіді Google Таблиці
+    async def log_to_gas():
+        try:
+            requests.post(GAS_URL, json=payload, timeout=10)
+        except Exception as e:
+            logger.error(f"GAS API Error: {e}")
+
+    asyncio.create_task(log_to_gas())
         
     await state.finish()
