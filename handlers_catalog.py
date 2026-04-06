@@ -30,6 +30,32 @@ async def show_product(bot, user_id, index, user_products, ALL_PRODUCTS, message
     else:
         await bot.send_photo(user_id, photo, caption=caption, parse_mode="HTML", reply_markup=markup)
 
+async def show_more_photos(callback_query, user_products, ALL_PRODUCTS, bot):
+    user_id = callback_query.from_user.id
+    article = callback_query.data.replace("more_photos_", "")
+    
+    # Видаляємо старі альбоми, якщо вони були
+    if user_id in user_products and 'last_album_ids' in user_products[user_id]:
+        for msg_id in user_products[user_id]['last_album_ids']:
+            try: await bot.delete_message(user_id, msg_id)
+            except: pass
+        user_products[user_id]['last_album_ids'] = []
+
+    photos = db.get_product_photos(ALL_PRODUCTS, article)
+    if not photos or len(photos) <= 1:
+        await bot.answer_callback_query(callback_query.id, text="Більше фото немає", show_alert=True)
+        return
+
+    media = types.MediaGroup()
+    for p_id in photos[1:10]: media.attach_photo(p_id)
+
+    try:
+        msgs = await bot.send_media_group(user_id, media=media)
+        user_products[user_id]['last_album_ids'] = [m.message_id for m in msgs]
+        await bot.answer_callback_query(callback_query.id)
+    except:
+        await bot.answer_callback_query(callback_query.id, text="Помилка завантаження фото")
+
 async def show_novinki(message: types.Message, user_products, ALL_PRODUCTS, bot):
     novinki = ALL_PRODUCTS[-10:]
     if not novinki:
