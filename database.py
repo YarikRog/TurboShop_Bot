@@ -1,60 +1,69 @@
-import requests
-import logging
 import os
+import logging
+import aiohttp
+import asyncio
 
+# Отримуємо URL з налаштувань Railway
 GAS_URL = os.getenv("GAS_URL")
+logger = logging.getLogger(__name__)
 
-# 1. Отримання всієї бази з Google Sheets (GAS)
-def get_all_items():
+# 1. АСИНХРОННЕ отримання всієї бази (GAS)
+async def get_all_items():
+    if not GAS_URL:
+        logger.error("❌ GAS_URL не налаштовано!")
+        return None
+        
     try:
-        # Зменшив таймаут, щоб бот не висів довго, якщо Google лежить
-        response = requests.get(GAS_URL, timeout=10)
-        if response.status_code == 200:
-            return response.json()
-        return None
+        # Використовуємо асинхронну сесію
+        async with aiohttp.ClientSession() as session:
+            async with session.get(GAS_URL, timeout=15) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data
+                else:
+                    logger.error(f"⚠️ Помилка GAS API: Статус {response.status}")
+                    return None
     except Exception as e:
-        logging.error(f"Помилка бази даних: {e}")
+        logger.error(f"❌ Критична помилка отримання бази: {e}")
         return None
 
-# 2. Отримуємо список унікальних розмірів
+# 2. Отримуємо список унікальних розмірів (Оптимізовано)
 def get_available_sizes(all_products, category, brand_name):
     if not all_products:
         return []
 
     sizes = set()
+    category = str(category).strip()
+    brand_name = str(brand_name).strip()
+
     for item in all_products:
         if str(item.get('Категорія')).strip() == category and \
            str(item.get('Бренд')).strip() == brand_name:
-            # Очищаємо пробіли та розбиваємо рядок розмірів
-            raw_sizes = str(item.get('Розміри')).replace(' ', '').split(',')
-            for s in raw_sizes:
-                if s and s != 'None':
-                    sizes.add(s.strip())
+            
+            # Чистимо рядок від зайвого
+            raw_val = str(item.get('Розміри', '')).replace(' ', '')
+            if raw_val and raw_val != 'None':
+                item_sizes = [s.strip() for s in raw_val.split(',') if s.strip()]
+                sizes.update(item_sizes)
 
-    return sorted(list(sizes), key=lambda x: float(x) if x.replace('.','',1).isdigit() else x)
+    # Сортування: спочатку цифри (якщо є), потім текст
+    try:
+        return sorted(list(sizes), key=lambda x: float(x.replace(',', '.')) if x.replace('.','',1).replace(',','',1).isdigit() else x)
+    except:
+        return sorted(list(sizes))
 
-# 3. Фільтр товарів
-def get_items_by_filter(all_products, category, brand_name, size):
-    if not all_products:
-        return []
-
-    filtered_products = []
-    for item in all_products:
-        item_category = str(item.get('Категорія')).strip()
-        item_brand = str(item.get('Бренд')).strip()
-        item_sizes = str(item.get('Розміри')).replace(' ', '').split(',')
-
-        if item_category == category and item_brand == brand_name and size in item_sizes:
-            filtered_products.append(item)
-
-    return filtered_products
-
-# 4. Отримання фото за артикулом
+# 3. Отримання фото за артикулом (Тепер ми просто дістаємо їх з об'єкта)
 def get_product_photos(all_products, article):
+    """
+    Ця функція тепер майже не потрібна, бо ми маємо PRODUCTS_MAP у main.py,
+    але залишимо її для сумісності з іншими модулями.
+    """
     if not all_products:
         return []
+    
+    target_article = str(article).strip()
     for item in all_products:
-        if str(item.get('Артикул')).strip() == str(article).strip():
+        if str(item.get('Артикул')).strip() == target_article:
             photos_string = str(item.get('Фото', ''))
             if not photos_string or photos_string == 'None':
                 return []
