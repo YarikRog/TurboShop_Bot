@@ -81,8 +81,15 @@ async def show_brands(message: types.Message, user_products, ALL_PRODUCTS):
 async def choose_size(message: types.Message, user_products, ALL_PRODUCTS):
     brand = message.text.replace("🔹 ", "").strip()
     user_id = message.from_user.id
-    if user_id not in user_products: user_products[user_id] = {'last_album_ids': []}
+    if user_id not in user_products: 
+        user_products[user_id] = {'last_album_ids': []}
+    
     user_products[user_id]['brand'] = brand
     category = user_products[user_id].get('category', 'Чоловічі')
     sizes = db.get_available_sizes(ALL_PRODUCTS, category, brand) 
-    await message.answer(f"Який розмір {brand} шукаємо?", reply_markup=kb.get_sizes_keyboard(sizes))
+    
+    if not sizes:
+        await message.answer("На жаль, зараз немає доступних розмірів для цього бренду.")
+        return
+        
+    await message.answer(f"Який розмір {brand} ({category}) шукаємо?", reply_markup=kb.get_sizes_keyboard(sizes))
