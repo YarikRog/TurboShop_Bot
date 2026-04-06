@@ -62,12 +62,14 @@ class ProductCache:
     def get_by_id(self, article):
         return self.map.get(str(article))
 
+# Створюємо глобальний об'єкт кешу
 cache = ProductCache()
 
 async def update_cache_task():
     while True:
         try:
-            data = db.get_all_items()
+            # ТУТ ДОДАНО await, бо db.get_all_items тепер асинхронна
+            data = await db.get_all_items() 
             if data:
                 cache.update(data)
                 logger.info(f"Cache updated: {len(data)} products")
@@ -140,7 +142,8 @@ async def descr_h(c: types.CallbackQuery):
 @dp.message_handler(commands=['start'], state="*")
 async def start_h(m: types.Message, state: FSMContext):
     await state.finish()
-    users.register_user(m.from_user.id, m.from_user.username, "Direct")
+    # ТУТ ДОДАНО await, бо users.register_user тепер асинхронна
+    await users.register_user(m.from_user.id, m.from_user.username, "Direct")
 
     await m.answer(
         "Вітаємо у TurboShop 👟",
@@ -225,8 +228,9 @@ async def fio_h(m, state): await safe_call(order.get_fio, m, state)
 @dp.message_handler(state=order.OrderState.waiting_for_delivery)
 async def deliv_h(m, state): await safe_call(order.get_delivery, m, state, bot)
 
-# ================= START =================
+# ================= RUN =================
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
+    # Запускаємо фонову задачу оновлення кешу
     loop.create_task(update_cache_task())
     executor.start_polling(dp, skip_updates=True)
