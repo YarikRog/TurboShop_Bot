@@ -25,10 +25,20 @@ async def update_cache_task():
             data = db.get_all_items()
             if data: 
                 ALL_PRODUCTS = data
-                # logging.info("✅ База товарів оновлена")
         except: pass
-        # Оновлюємо кожну хвилину (60 сек), щоб ціни завжди були актуальні
         await asyncio.sleep(60)
+
+# --- НОВИЙ ОБРОБНИК ОПИСУ ---
+@dp.callback_query_handler(lambda c: c.data.startswith('descr_'), state="*")
+async def descr_h(c: types.CallbackQuery):
+    article = c.data.replace("descr_", "")
+    product = next((i for i in ALL_PRODUCTS if str(i.get('Артикул')) == article), None)
+    if product:
+        text = product.get('Опис')
+        if not text or str(text).strip() == "None": text = "Опис скоро з'явиться... 😉"
+        await bot.answer_callback_query(c.id, text=text, show_alert=True)
+    else:
+        await bot.answer_callback_query(c.id, text="Інформація не знайдена.")
 
 # --- СЛУЖБОВІ ТА СТАРТ ---
 @dp.message_handler(commands=['start'], state="*")
@@ -75,7 +85,6 @@ async def start_cat_h(c: types.CallbackQuery):
 async def pag_h(c: types.CallbackQuery):
     action, idx = c.data.split('_')
     new_idx = int(idx) + 1 if action == 'next' else int(idx) - 1
-    # Викликаємо show_product, де вже працює наш запобіжник індексів
     await catalog.show_product(bot, c.from_user.id, new_idx, user_products, ALL_PRODUCTS, c.message.message_id)
 
 @dp.callback_query_handler(lambda c: c.data.startswith('more_photos_'), state="*")
