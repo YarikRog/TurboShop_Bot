@@ -1,96 +1,104 @@
 from aiogram import types
 import database as db
 import keyboards as kb
+import logging
 
-# Ми прибрали зайві аргументи, тепер все беремо зі state
+logger = logging.getLogger(__name__)
+
 async def show_product(bot, user_id, index, state, message_to_edit=None):
-    # Отримуємо дані з Redis
-    async with state.proxy() as data:
-        product_ids = data.get('product_ids', [])
-        current_size = data.get('size', '—')
-        
-        if not product_ids:
-            await bot.send_message(user_id, "⚠️ Дані застаріли. Почни заново з меню.", reply_markup=kb.main_menu())
-            return
+    # Отримуємо дані без проксі, щоб не блокувати стан
+    data = await state.get_data()
+    product_ids = data.get('product_ids', [])
+    current_size = data.get('size', '—')
+    
+    if not product_ids:
+        await bot.send_message(user_id, "⚠️ Дані застаріли. Почни заново з меню.", reply_markup=kb.main_menu())
+        return
 
-        # Валідація індексу
-        if index < 0: index = 0
-        elif index >= len(product_ids): index = len(product_ids) - 1
-        
-        # Отримуємо товар через імпортований cache (він має бути доступний або переданий)
-        # Для чистоти коду, ми дістанемо товар з ALL_PRODUCTS за ID
-        from main import cache # Імпортуємо твій новий кеш
-        article = product_ids[index]
-        product = cache.get_by_id(article)
-        
-        if not product:
-            await bot.send_message(user_id, "❌ Товар видалено з бази.")
-            return
+    # Валідація індексу
+    if index < 0: index = 0
+    elif index >= len(product_ids): index = len(product_ids) - 1
+    
+    # Дістаємо товар напряму з бази через database.py, щоб не було циклічного імпорту з main
+    article = product_ids[index]
+    all_items = await db.get_all_items() # Беремо актуальний список
+    
+    product = next((i for i in all_items if str(i.get('Артикул')) == str(article)), None)
+    
+    if not product:
+        await bot.send_message(user_id, "❌ Товар не знайдено в базі.")
+        return
 
-        total = len(product_ids)
-        data['current_index'] = index # Запам'ятовуємо, де зупинився юзер
+    total = len(product_ids)
+    await state.update_data(current_index=index)
 
-        caption = (
-            f"⠀👟 <b>{product.get('Бренд')} {product.get('Модель')}</b>\n"
-            f"⠀💰 Ціна: <b>{product.get('Ціна')} грн</b>\n"
-            f"⠀📏 Розмір: {current_size}\n"
-            f"⠀🆔 Артикул: <code>{product.get('Артикул')}</code>"
-        )
-        
-        # Отримуємо фото (тут можна залишити db.get_product_photos або брати з product)
-        photo_field = product.get('Фото', '')
-        photos = photo_field.split(',') if photo_field else []
-        photo = photos[0].strip() if photos and str(photos[0]).strip() not in ["None", ""] else None
+    caption = (
+        f"⠀👟 <b>{product.get('Бренд')} {product.get('Модель')}</b>\n"
+        f"⠀💰 Ціна: <b>{product.get('Ціна')} грн</b>\n"
+        f"⠀📏 Розмір: {current_size}\n"
+        f"⠀🆔 Артикул: <code>{product.get('Артикул')}</code>"
+    )
+    
+    # Чистимо посилання на фото
+    photo_field = str(product.get('Фото', ''))
+    photos = [p.strip() for p in photo_field.split(',') if p.strip() and p.lower() != 'none']
+    photo = photos[0] if photos else None
 
-        markup = kb.get_product_navigation(index, total, article)
+    markup = kb.get_product_navigation(index, total, article)
 
+    try:
         if message_to_edit:
-            try:
-                if photo:
+            if photo:
+                try:
                     media = types.InputMediaPhoto(photo, caption=caption, parse_mode="HTML")
                     await bot.edit_message_media(chat_id=user_id, message_id=message_to_edit, media=media, reply_markup=markup)
-                else:
-                    await bot.send_message(user_id, f"🖼 (Фото очікується)\n\n{caption}", parse_mode="HTML", reply_markup=markup)
-            except Exception:
-                await bot.send_message(user_id, caption, parse_mode="HTML", reply_markup=markup)
+                except Exception as e:
+                    # Якщо не вдалося відредагувати (наприклад, те саме фото), просто шлемо нове
+                    await bot.send_photo(user_id, photo, caption=caption, parse_mode="HTML", reply_markup=markup)
+            else:
+                await bot.send_message(user_id, f"🖼 (Фото очікується)\n\n{caption}", parse_mode="HTML", reply_markup=markup)
         else:
             if photo:
                 await bot.send_photo(user_id, photo, caption=caption, parse_mode="HTML", reply_markup=markup)
             else:
                 await bot.send_message(user_id, f"🖼 (Фото очікується)\n\n{caption}", parse_mode="HTML", reply_markup=markup)
+    except Exception as e:
+        logger.error(f"Error in show_product: {e}")
+        # Запасний варіант — просто текст
+        await bot.send_message(user_id, caption, parse_mode="HTML", reply_markup=markup)
 
 async def show_more_photos(callback_query, state, ALL_PRODUCTS, bot):
     user_id = callback_query.from_user.id
     article = callback_query.data.replace("more_photos_", "")
     
-    # Очищуємо старі фото через state
-    async with state.proxy() as data:
-        last_album = data.get('last_album_ids', [])
-        for msg_id in last_album:
-            try: await bot.delete_message(user_id, msg_id)
-            except: pass
-        data['last_album_ids'] = []
+    data = await state.get_data()
+    last_album = data.get('last_album_ids', [])
+    
+    # Видаляємо старі фото альбому
+    for msg_id in last_album:
+        try: await bot.delete_message(user_id, msg_id)
+        except: pass
 
-        from main import cache
-        product = cache.get_by_id(article)
-        if not product: return
-        
-        photo_field = product.get('Фото', '')
-        photos = [p.strip() for p in photo_field.split(',') if p.strip() not in ["", "None"]]
-        
-        if len(photos) <= 1:
-            return await bot.answer_callback_query(callback_query.id, text="Більше фото немає", show_alert=True)
+    product = next((i for i in ALL_PRODUCTS if str(i.get('Артикул')) == str(article)), None)
+    if not product: return
+    
+    photo_field = str(product.get('Фото', ''))
+    photos = [p.strip() for p in photo_field.split(',') if p.strip() and p.lower() != 'none']
+    
+    if len(photos) <= 1:
+        return await bot.answer_callback_query(callback_query.id, text="Більше фото немає", show_alert=True)
 
-        media = types.MediaGroup()
-        for p_id in photos[1:10]: 
-            media.attach_photo(p_id)
+    media = types.MediaGroup()
+    for p_id in photos[1:10]: 
+        media.attach_photo(p_id)
 
-        try:
-            msgs = await bot.send_media_group(user_id, media=media)
-            data['last_album_ids'] = [m.message_id for m in msgs]
-            await bot.answer_callback_query(callback_query.id)
-        except Exception:
-            await bot.answer_callback_query(callback_query.id, text="Помилка завантаження альбому")
+    try:
+        msgs = await bot.send_media_group(user_id, media=media)
+        await state.update_data(last_album_ids=[m.message_id for m in msgs])
+        await bot.answer_callback_query(callback_query.id)
+    except Exception as e:
+        logger.error(f"Album error: {e}")
+        await bot.answer_callback_query(callback_query.id, text="Помилка завантаження альбому")
 
 async def show_novinki(message, state, ALL_PRODUCTS, bot):
     novinki = ALL_PRODUCTS[-10:]
@@ -102,9 +110,11 @@ async def show_novinki(message, state, ALL_PRODUCTS, bot):
     await show_product(bot, message.from_user.id, 0, state)
 
 async def show_brands(message, state, ALL_PRODUCTS):
-    category = "Чоловічі" if "Чоловічі" in message.text else "Жіночі"
-    # Очищуємо дані старого пошуку
-    await state.update_data(category=category, last_album_ids=[])
+    # Тут ми вже отримуємо "чисту" категорію з main.py
+    data = await state.get_data()
+    category = data.get('category', 'Чоловічі')
+    
+    await state.update_data(last_album_ids=[])
     
     brands = sorted(list(set([
         str(i.get('Бренд')).strip() 
@@ -112,7 +122,7 @@ async def show_brands(message, state, ALL_PRODUCTS):
     ])))
     
     if not brands:
-        return await message.answer("На жаль, зараз порожньо.")
+        return await message.answer(f"На жаль, у категорії {category} зараз порожньо.")
     
     await message.answer(f"Обери бренд ({category}):", reply_markup=kb.get_brands_keyboard(brands))
 
@@ -123,7 +133,6 @@ async def choose_size(message, state, ALL_PRODUCTS):
     
     await state.update_data(brand=brand)
     
-    # Використовуємо твій існуючий db.get_available_sizes
     sizes = db.get_available_sizes(ALL_PRODUCTS, category, brand) 
     
     if not sizes:
