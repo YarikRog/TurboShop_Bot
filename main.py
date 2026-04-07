@@ -13,7 +13,18 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logger = logging.getLogger("TurboBot.Main")
 
 TOKEN = os.getenv("BOT_TOKEN")
-storage = RedisStorage2(host=os.getenv("REDIS_HOST", "localhost"), port=6379, db=5)
+
+# Налаштування Redis з обмеженням пулу з'єднань
+# Railway Redis зазвичай потребує пароль та специфічний хост
+storage = RedisStorage2(
+    host=os.getenv("REDIS_HOST", "ballast.proxy.rlwy.net"),
+    port=int(os.getenv("REDIS_PORT", 28367)),
+    password=os.getenv("REDIS_PASSWORD"),
+    db=5,
+    pool_size=5,             # ОБМЕЖУЄМО ПУЛ: бот триматиме максимум 5 конектів
+    wait_for_connection=True # Чекати на вільний конект, а не кидати помилку
+)
+
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot, storage=storage)
 
@@ -33,18 +44,19 @@ class ProductCache:
         return self._products
 
     def get_by_id(self, article):
-        return next((i for i in self._products if str(i.get('Артикул')) == str(article)), None)
+        return next((i for i in self._products if str(i.get('Артикул', '')).strip() == str(article).strip()), None)
 
 cache = ProductCache()
 
 # ================= BACKGROUND TASKS =================
 async def on_startup(_):
+    await cache.update()
     asyncio.create_task(cache_refresher())
 
 async def cache_refresher():
     while True:
-        await cache.update()
         await asyncio.sleep(60)
+        await cache.update()
 
 # ================= HANDLERS =================
 @dp.message_handler(commands=['start'], state="*")
@@ -76,7 +88,6 @@ async def size_select_h(c: types.CallbackQuery, state: FSMContext):
     size = c.data.replace("size_", "")
     data = await state.get_data()
     
-    # Фільтрація
     all_items = cache.get_all()
     products = [i for i in all_items if 
                 str(i.get('Категорія')).strip() == data.get('category') and 
@@ -93,8 +104,9 @@ async def size_select_h(c: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query_handler(lambda c: c.data.startswith(('next_', 'prev_')), state="*")
 async def nav_h(c: types.CallbackQuery, state: FSMContext):
-    _, idx = c.data.split('_')
-    await catalog.show_product(bot, c.from_user.id, int(idx), state, c.message.message_id, cache.get_all())
+    action, idx = c.data.split('_')
+    new_idx = int(idx) + 1 if action == 'next' else int(idx) - 1
+    await catalog.show_product(bot, c.from_user.id, new_idx, state, c.message.message_id, cache.get_all())
     await c.answer()
 
 @dp.callback_query_handler(lambda c: c.data.startswith('buy_'), state="*")
@@ -109,7 +121,7 @@ async def more_photos_h(c: types.CallbackQuery, state: FSMContext):
 async def descr_h(c: types.CallbackQuery):
     art = c.data.replace("descr_", "")
     item = cache.get_by_id(art)
-    txt = item.get('Опис', "Опис відсутній") if item else "Не знайдено"
+    txt = item.get('Опис', "Опис скоро буде 😉") if item else "Не знайдено"
     await c.answer(txt, show_alert=True)
 
 # Обробики станів замовлення
