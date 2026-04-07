@@ -53,9 +53,10 @@ class ProductCache:
 
     def update(self, data):
         self.products = list(data)
+        # ТУТ ВИПРАВЛЕНО СИМВОЛ "л" в слові Артикул
         self.map = {
             str(item.get('Артикул')): item
-            for item in data if item.get('Артикуલ')
+            for item in data if item.get('Артикул')
         }
 
     def get_all(self):
@@ -172,7 +173,7 @@ async def size_select_h(c: types.CallbackQuery, state: FSMContext):
     ids = [str(i.get('Артикул')) for i in products if i.get('Артикул')]
     await state.update_data(product_ids=ids, index=0, size=chosen_size)
     
-    # ПЕРЕДАЄМО КЕШ ДЛЯ ШВИДКОСТІ
+    # ПЕРЕДАЄМО КЕШ
     await safe_call(catalog.show_product, bot, c.from_user.id, 0, state, all_products=cache.get_all())
 
 @dp.callback_query_handler(lambda c: c.data.startswith(('next_', 'prev_')), state="*")
@@ -180,7 +181,7 @@ async def pag_h(c: types.CallbackQuery, state: FSMContext):
     action, idx = c.data.split('_')
     new_idx = int(idx) + 1 if action == 'next' else int(idx) - 1
     
-    # ПЕРЕДАЄМО КЕШ ДЛЯ ШВИДКОСТІ
+    # ПЕРЕДАЄМО КЕШ
     await safe_call(catalog.show_product, bot, c.from_user.id, new_idx, state, c.message.message_id, all_products=cache.get_all())
 
 @dp.callback_query_handler(lambda c: c.data.startswith('more_photos_'), state="*")
@@ -189,6 +190,7 @@ async def photos_h(c: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('buy_'), state="*")
 async def buy_h(c: types.CallbackQuery, state: FSMContext):
+    # ПЕРЕДАЄМО КЕШ В ОБРОБНИК ЗАМОВЛЕННЯ
     await safe_call(order.process_buy, c, state, cache.get_all())
 
 @dp.message_handler(content_types=['contact'], state=order.OrderState.waiting_for_phone)
