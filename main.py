@@ -134,7 +134,6 @@ async def novinki_h(m: types.Message, state: FSMContext):
 
 @dp.message_handler(lambda m: m.text in ["👟 Чоловічі", "👠 Жіночі"], state="*")
 async def brands_h(m: types.Message, state: FSMContext):
-    # Зберігаємо "чисту" категорію без емодзі
     category = clean_category(m.text)
     await state.update_data(category=category)
     await safe_call(catalog.show_brands, m, state, cache.get_all())
@@ -147,24 +146,36 @@ async def size_h(m: types.Message, state: FSMContext):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('size_'), state="*")
 async def size_select_h(c: types.CallbackQuery, state: FSMContext):
-    size = c.data.replace("size_", "").strip()
+    chosen_size = c.data.replace("size_", "").strip()
     data = await state.get_data()
     
-    # Фільтрація з урахуванням списку розмірів через кому
+    user_cat = str(data.get('category', '')).strip()
+    user_brand = str(data.get('brand', '')).strip()
+    
     products = []
-    for i in cache.get_all():
+    all_items = cache.get_all()
+    
+    logger.info(f"🔍 ПОШУК: Кат='{user_cat}', Бренд='{user_brand}', Розмір='{chosen_size}'")
+
+    for i in all_items:
         db_cat = str(i.get('Категорія', '')).strip()
         db_brand = str(i.get('Бренд', '')).strip()
-        db_sizes = [s.strip() for s in str(i.get('Розміри', '')).split(',')]
         
-        if db_cat == data.get('category') and db_brand == data.get('brand') and size in db_sizes:
+        raw_sizes = str(i.get('Розміри', ''))
+        db_sizes = [s.strip() for s in raw_sizes.replace(';', ',').split(',') if s.strip()]
+        
+        if db_cat == user_cat and db_brand == user_brand:
+            logger.info(f"✅ Знайдено модель {i.get('Модель')}. Розміри в базі: {db_sizes}")
+        
+        if db_cat == user_cat and db_brand == user_brand and chosen_size in db_sizes:
             products.append(i)
 
     if not products:
+        logger.warning(f"❌ НІЧОГО НЕ ЗНАЙДЕНО для {user_brand} {chosen_size}")
         return await c.answer("❌ Товар видалено або змінено", show_alert=True)
 
     ids = [str(i.get('Артикул')) for i in products if i.get('Артикул')]
-    await state.update_data(product_ids=ids, index=0, size=size)
+    await state.update_data(product_ids=ids, index=0, size=chosen_size)
     await safe_call(catalog.show_product, bot, c.from_user.id, 0, state)
 
 @dp.callback_query_handler(lambda c: c.data.startswith(('next_', 'prev_')), state="*")
