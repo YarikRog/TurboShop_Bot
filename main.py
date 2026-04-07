@@ -14,15 +14,13 @@ logger = logging.getLogger("TurboBot.Main")
 
 TOKEN = os.getenv("BOT_TOKEN")
 
-# Налаштування Redis з обмеженням пулу з'єднань
-# Railway Redis зазвичай потребує пароль та специфічний хост
+# ПРАВИЛЬНЕ НАЛАШТУВАННЯ REDIS (ОДИН РАЗ І НА ПОЧАТКУ)
 storage = RedisStorage2(
     host=os.getenv("REDIS_HOST", "ballast.proxy.rlwy.net"),
     port=int(os.getenv("REDIS_PORT", 28367)),
     password=os.getenv("REDIS_PASSWORD"),
     db=5,
-    pool_size=5,             # ОБМЕЖУЄМО ПУЛ: бот триматиме максимум 5 конектів
-    wait_for_connection=True # Чекати на вільний конект, а не кидати помилку
+    pool_size=10
 )
 
 bot = Bot(token=TOKEN)
@@ -87,7 +85,6 @@ async def brand_h(m: types.Message, state: FSMContext):
 async def size_select_h(c: types.CallbackQuery, state: FSMContext):
     size = c.data.replace("size_", "")
     data = await state.get_data()
-    
     all_items = cache.get_all()
     products = [i for i in all_items if 
                 str(i.get('Категорія')).strip() == data.get('category') and 
@@ -124,7 +121,6 @@ async def descr_h(c: types.CallbackQuery):
     txt = item.get('Опис', "Опис скоро буде 😉") if item else "Не знайдено"
     await c.answer(txt, show_alert=True)
 
-# Обробики станів замовлення
 @dp.message_handler(content_types=['contact', 'text'], state=order.OrderState.waiting_for_phone)
 async def phone_h(m, state): await order.get_phone(m, state)
 
