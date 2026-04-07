@@ -21,34 +21,27 @@ class OrderState(StatesGroup):
     waiting_for_delivery = State()
 
 async def process_buy(callback_query: types.CallbackQuery, state: FSMContext, ALL_PRODUCTS):
-    # Тепер ми не передаємо індекс через аргумент, а беремо його або ставимо дефолт
-    index = int(callback_query.data.split('_')[1])
+    # Витягуємо артикул прямо з callback_data кнопки (вона має бути buy_{article})
+    article = callback_query.data.replace("buy_", "")
     user_id = callback_query.from_user.id
     
-    # ДІСТАЄМО ДАНІ З ТВОГО НОВОГО REDIS (FSM)
+    # Дістаємо вибраний розмір зі стану (він там з моменту вибору в каталозі)
     user_data = await state.get_data()
-    product_ids = user_data.get('product_ids', [])
     selected_size = user_data.get('size', 'Не вказано')
 
-    if not product_ids or index >= len(product_ids):
-        await callback_query.answer("⚠️ Помилка сесії. Оберіть товар знову.", show_alert=True)
-        return
-    
-    # Отримуємо товар з кешу в main.py (імпортуємо акуратно)
-    from main import cache
-    article = product_ids[index]
-    product = cache.get_by_id(article)
+    # ШУКАЄМО ТОВАР У ПЕРЕДАНОМУ КЕШІ (ALL_PRODUCTS прилітає з main.py)
+    product = next((i for i in ALL_PRODUCTS if str(i.get('Артикул')) == str(article)), None)
 
     if not product:
-        await callback_query.answer("❌ Товар більше не доступний.", show_alert=True)
+        await callback_query.answer("❌ Товар більше не доступний у базі.", show_alert=True)
         return
 
     # Готуємо фото для підтвердження
-    photo_field = product.get('Фото', '')
-    photos = [p.strip() for p in photo_field.split(',') if p.strip() not in ["", "None"]]
+    photo_field = str(product.get('Фото', ''))
+    photos = [p.strip() for p in photo_field.split(',') if p.strip() and p.lower() != "none"]
     main_photo = photos[0] if photos else "https://via.placeholder.com/500"
 
-    # Зберігаємо все необхідне для замовлення в стан
+    # Зберігаємо всі дані про товар у стан замовлення
     await state.update_data(
         item=f"{product.get('Бренд')} {product.get('Модель')}", 
         article=str(article), 
@@ -62,6 +55,7 @@ async def process_buy(callback_query: types.CallbackQuery, state: FSMContext, AL
         "🚀 Залишилося зовсім трохи!\nПоділися номером телефону за допомогою кнопки нижче: 👇", 
         reply_markup=kb.get_contact_keyboard()
     )
+    await callback_query.answer()
 
 async def get_phone(message: types.Message, state: FSMContext):
     if not message.contact:
@@ -102,8 +96,7 @@ async def get_delivery(message: types.Message, state: FSMContext, bot):
         phone = f"38{phone}"
     phone_formatted = f"+{phone}"
 
-    # --- 1. СПОВІЩЕННЯ АДМІНІВ (Беремо з MANAGERS або ADMIN_IDS) ---
-    # Поки що шлемо на ADMIN_IDS, як ти і просив для тестів
+    # --- 1. СПОВІЩЕННЯ АДМІНІВ ---
     admin_msg = (
         f"🛍 <b>НОВЕ ЗАМОВЛЕННЯ!</b>\n"
         f"───────────────────\n"
@@ -159,7 +152,6 @@ async def get_delivery(message: types.Message, state: FSMContext, bot):
         "size": size
     }
     
-    # Використовуємо асинхронний запит, щоб бот не "зависав" на час відповіді Google Таблиці
     async def log_to_gas():
         try:
             requests.post(GAS_URL, json=payload, timeout=10)
