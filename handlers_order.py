@@ -21,29 +21,38 @@ class OrderState(StatesGroup):
     waiting_for_delivery = State()
 
 async def process_buy(callback_query: types.CallbackQuery, state: FSMContext, ALL_PRODUCTS):
-    # Витягуємо артикул прямо з callback_data кнопки (вона має бути buy_{article})
-    article = callback_query.data.replace("buy_", "")
-    user_id = callback_query.from_user.id
+    # Отримуємо артикул і чистимо його від зайвих пробілів
+    article = callback_query.data.replace("buy_", "").strip()
     
-    # Дістаємо вибраний розмір зі стану (він там з моменту вибору в каталозі)
     user_data = await state.get_data()
     selected_size = user_data.get('size', 'Не вказано')
 
-    # ШУКАЄМО ТОВАР У ПЕРЕДАНОМУ КЕШІ (ALL_PRODUCTS прилітає з main.py)
-    product = next((i for i in ALL_PRODUCTS if str(i.get('Артикул')) == str(article)), None)
+    # Функція для нормалізації (прибираємо пробіли, робимо в нижній регістр, міняємо довге тире)
+    def normalize(val):
+        return str(val).strip().lower().replace("–", "-")
+
+    # ШУКАЄМО ТОВАР У КЕШІ
+    product = next(
+        (i for i in ALL_PRODUCTS if normalize(i.get('Артикул')) == normalize(article)), 
+        None
+    )
 
     if not product:
+        # Лог допоможе зрозуміти, що саме не співпало, якщо помилка повториться
+        logger.error(f"❌ ТОВАР НЕ ЗНАЙДЕНО. Шукав: '{article}'.")
         await callback_query.answer("❌ Товар більше не доступний у базі.", show_alert=True)
         return
 
-    # Готуємо фото для підтвердження
+    # Якщо знайшли — готуємо дані
     photo_field = str(product.get('Фото', ''))
     photos = [p.strip() for p in photo_field.split(',') if p.strip() and p.lower() != "none"]
     main_photo = photos[0] if photos else "https://via.placeholder.com/500"
 
-    # Зберігаємо всі дані про товар у стан замовлення
+    # Визначаємо назву (підтримка обох варіантів написання в таблиці)
+    model_name = product.get('Model') or product.get('Модель') or ""
+
     await state.update_data(
-        item=f"{product.get('Бренд')} {product.get('Модель')}", 
+        item=f"{product.get('Бренд')} {model_name}".strip(), 
         article=str(article), 
         price=str(product.get('Ціна', '0')),
         photo=main_photo,
@@ -140,7 +149,7 @@ async def get_delivery(message: types.Message, state: FSMContext, bot):
     except:
         await message.answer(client_msg, parse_mode="HTML", reply_markup=kb.main_menu())
 
-    # --- 3. ЗАПИС В ТАБЛИЦЮ ---
+    # --- 3. ЗАПИС В ТАБЛИЦЮ (Google Apps Script) ---
     payload = {
         "item": item_name,
         "article": article,
