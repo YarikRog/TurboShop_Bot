@@ -55,7 +55,7 @@ class ProductCache:
         self.products = list(data)
         self.map = {
             str(item.get('Артикул')): item
-            for item in data if item.get('Артикул')
+            for item in data if item.get('Артикуલ')
         }
 
     def get_all(self):
@@ -160,29 +160,28 @@ async def size_select_h(c: types.CallbackQuery, state: FSMContext):
     for i in all_items:
         db_cat = str(i.get('Категорія', '')).strip()
         db_brand = str(i.get('Бренд', '')).strip()
-        
         raw_sizes = str(i.get('Розміри', ''))
         db_sizes = [s.strip() for s in raw_sizes.replace(';', ',').split(',') if s.strip()]
-        
-        if db_cat == user_cat and db_brand == user_brand:
-            logger.info(f"✅ Знайдено модель {i.get('Модель')}. Розміри в базі: {db_sizes}")
         
         if db_cat == user_cat and db_brand == user_brand and chosen_size in db_sizes:
             products.append(i)
 
     if not products:
-        logger.warning(f"❌ НІЧОГО НЕ ЗНАЙДЕНО для {user_brand} {chosen_size}")
         return await c.answer("❌ Товар видалено або змінено", show_alert=True)
 
     ids = [str(i.get('Артикул')) for i in products if i.get('Артикул')]
     await state.update_data(product_ids=ids, index=0, size=chosen_size)
-    await safe_call(catalog.show_product, bot, c.from_user.id, 0, state)
+    
+    # ПЕРЕДАЄМО КЕШ ДЛЯ ШВИДКОСТІ
+    await safe_call(catalog.show_product, bot, c.from_user.id, 0, state, all_products=cache.get_all())
 
 @dp.callback_query_handler(lambda c: c.data.startswith(('next_', 'prev_')), state="*")
 async def pag_h(c: types.CallbackQuery, state: FSMContext):
     action, idx = c.data.split('_')
     new_idx = int(idx) + 1 if action == 'next' else int(idx) - 1
-    await safe_call(catalog.show_product, bot, c.from_user.id, new_idx, state, c.message.message_id)
+    
+    # ПЕРЕДАЄМО КЕШ ДЛЯ ШВИДКОСТІ
+    await safe_call(catalog.show_product, bot, c.from_user.id, new_idx, state, c.message.message_id, all_products=cache.get_all())
 
 @dp.callback_query_handler(lambda c: c.data.startswith('more_photos_'), state="*")
 async def photos_h(c: types.CallbackQuery, state: FSMContext):
