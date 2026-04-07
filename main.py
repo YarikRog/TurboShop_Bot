@@ -28,15 +28,13 @@ TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("BOT_TOKEN not set")
 
-# Дані для підключення до Redis (змінні з Railway)
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD") # Твій пароль від Redis
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 
 # ================= BOT =================
 bot = Bot(token=TOKEN)
 
-# Налаштовуємо RedisStorage з паролем
 storage = RedisStorage2(
     host=REDIS_HOST,
     port=REDIS_PORT,
@@ -71,7 +69,6 @@ cache = ProductCache()
 async def update_cache_task():
     while True:
         try:
-            # Викликаємо асинхронно через await
             data = await db.get_all_items() 
             if data:
                 cache.update(data)
@@ -80,10 +77,13 @@ async def update_cache_task():
                 logger.warning("Empty DB response")
         except Exception:
             logger.exception("CACHE UPDATE ERROR")
-
         await asyncio.sleep(60)
 
-# ================= SAFE CALL =================
+# ================= HELPERS =================
+def clean_category(cat_text):
+    """Прибирає емодзі та зайві пробіли для точного пошуку в БД"""
+    return cat_text.replace("👟", "").replace("👠", "").strip()
+
 async def safe_call(func, *args, **kwargs):
     try:
         return await func(*args, **kwargs)
@@ -91,59 +91,40 @@ async def safe_call(func, *args, **kwargs):
         logger.exception("HANDLER ERROR")
         return None
 
-# ================= MANAGER =================
+# ================= HANDLERS =================
+
 @dp.message_handler(lambda m: m.text == "💬 Менеджер", state="*")
 async def manager_h(m: types.Message):
     manager_ids = os.getenv("MANAGERS", "").split(',')
-    text = (
-        "<b>Маєш запитання чи потрібна допомога?</b> 🤔\n\n"
-        "Наші менеджери на зв'язку! Обери 👇"
-    )
+    text = "<b>Маєш запитання чи потрібна допомога?</b> 🤔\n\nНаші менеджери на зв'язку!"
     markup = InlineKeyboardMarkup(row_width=1)
-
-    tasks = [
-        bot.get_chat(m_id.strip())
-        for m_id in manager_ids if m_id.strip().isdigit()
-    ]
-
+    tasks = [bot.get_chat(m_id.strip()) for m_id in manager_ids if m_id.strip().isdigit()]
     if tasks:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for res in results:
             if isinstance(res, types.Chat) and res.username:
-                markup.add(
-                    InlineKeyboardButton(
-                        text=f"👨‍💻 {res.first_name}",
-                        url=f"https://t.me/{res.username}"
-                    )
-                )
-
+                markup.add(InlineKeyboardButton(text=f"👨‍💻 {res.first_name}", url=f"https://t.me/{res.username}"))
     if not markup.inline_keyboard:
         markup.add(InlineKeyboardButton(text="👨‍💻 Менеджер", url="https://t.me/yarik721"))
-
     await m.answer(text, reply_markup=markup, parse_mode="HTML")
 
-# ================= DESCRIPTION =================
 @dp.callback_query_handler(lambda c: c.data.startswith('descr_'), state="*")
 async def descr_h(c: types.CallbackQuery):
     product = cache.get_by_id(c.data.replace("descr_", ""))
     text = product.get('Опис') or "Опис скоро з'явиться 😉" if product else "Товар не знайдено"
     await bot.answer_callback_query(c.id, text=text, show_alert=True)
 
-# ================= START =================
 @dp.message_handler(commands=['start'], state="*")
 async def start_h(m: types.Message, state: FSMContext):
     await state.finish()
-    # Асинхронна реєстрація
     await users.register_user(m.from_user.id, m.from_user.username, "Direct")
     await m.answer("Вітаємо у TurboShop 👟", reply_markup=kb.main_menu())
 
-# ================= MENU =================
 @dp.message_handler(lambda m: m.text in ["🏠 Головне меню", "⬅️ Назад"], state="*")
 async def home_h(m: types.Message, state: FSMContext):
     await state.finish()
     await m.answer("Головне меню:", reply_markup=kb.main_menu())
 
-# ================= CATALOG =================
 @dp.message_handler(lambda m: m.text == "🔥 Наші новинки", state="*")
 async def novinki_h(m: types.Message, state: FSMContext):
     products = cache.get_all()
@@ -153,26 +134,34 @@ async def novinki_h(m: types.Message, state: FSMContext):
 
 @dp.message_handler(lambda m: m.text in ["👟 Чоловічі", "👠 Жіночі"], state="*")
 async def brands_h(m: types.Message, state: FSMContext):
-    await state.update_data(category=m.text)
+    # Зберігаємо "чисту" категорію без емодзі
+    category = clean_category(m.text)
+    await state.update_data(category=category)
     await safe_call(catalog.show_brands, m, state, cache.get_all())
 
 @dp.message_handler(lambda m: m.text.startswith("🔹 "))
 async def size_h(m: types.Message, state: FSMContext):
-    await state.update_data(brand=m.text.replace("🔹 ", ""))
+    brand = m.text.replace("🔹 ", "").strip()
+    await state.update_data(brand=brand)
     await safe_call(catalog.choose_size, m, state, cache.get_all())
 
 @dp.callback_query_handler(lambda c: c.data.startswith('size_'), state="*")
 async def size_select_h(c: types.CallbackQuery, state: FSMContext):
-    size = c.data.replace("size_", "")
+    size = c.data.replace("size_", "").strip()
     data = await state.get_data()
-    products = [
-        i for i in cache.get_all()
-        if i.get('Категорія') == data.get('category')
-        and i.get('Бренд') == data.get('brand')
-        and size in str(i.get('Розміри', ''))
-    ]
+    
+    # Фільтрація з урахуванням списку розмірів через кому
+    products = []
+    for i in cache.get_all():
+        db_cat = str(i.get('Категорія', '')).strip()
+        db_brand = str(i.get('Бренд', '')).strip()
+        db_sizes = [s.strip() for s in str(i.get('Розміри', '')).split(',')]
+        
+        if db_cat == data.get('category') and db_brand == data.get('brand') and size in db_sizes:
+            products.append(i)
+
     if not products:
-        return await c.answer("Немає в наявності 😔", show_alert=True)
+        return await c.answer("❌ Товар видалено або змінено", show_alert=True)
 
     ids = [str(i.get('Артикул')) for i in products if i.get('Артикул')]
     await state.update_data(product_ids=ids, index=0, size=size)
@@ -188,7 +177,6 @@ async def pag_h(c: types.CallbackQuery, state: FSMContext):
 async def photos_h(c: types.CallbackQuery, state: FSMContext):
     await safe_call(catalog.show_more_photos, c, state, cache.get_all(), bot)
 
-# ================= ORDER =================
 @dp.callback_query_handler(lambda c: c.data.startswith('buy_'), state="*")
 async def buy_h(c: types.CallbackQuery, state: FSMContext):
     await safe_call(order.process_buy, c, state, cache.get_all())
@@ -202,7 +190,6 @@ async def fio_h(m, state): await safe_call(order.get_fio, m, state)
 @dp.message_handler(state=order.OrderState.waiting_for_delivery)
 async def deliv_h(m, state): await safe_call(order.get_delivery, m, state, bot)
 
-# ================= RUN =================
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
     loop.create_task(update_cache_task())
