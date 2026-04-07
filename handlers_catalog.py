@@ -5,8 +5,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-async def show_product(bot, user_id, index, state, message_to_edit=None):
-    # Отримуємо дані без проксі, щоб не блокувати стан
+# ДОДАЛИ all_products=None в кінець аргументів
+async def show_product(bot, user_id, index, state, message_to_edit=None, all_products=None):
+    # Отримуємо дані без проксі
     data = await state.get_data()
     product_ids = data.get('product_ids', [])
     current_size = data.get('size', '—')
@@ -19,14 +20,20 @@ async def show_product(bot, user_id, index, state, message_to_edit=None):
     if index < 0: index = 0
     elif index >= len(product_ids): index = len(product_ids) - 1
     
-    # Дістаємо товар напряму з бази через database.py, щоб не було циклічного імпорту з main
     article = product_ids[index]
-    all_items = await db.get_all_items() # Беремо актуальний список
     
-    product = next((i for i in all_items if str(i.get('Артикул')) == str(article)), None)
+    # --- ШВИДКИЙ ПОШУК ЧЕРЕЗ КЕШ ---
+    # Використовуємо переданий список, якщо він є. Якщо немає (раптом) - робимо запит.
+    items = all_products if all_products else []
+    
+    if not items:
+        logger.warning("Кеш порожній, робимо повільний запит до БД")
+        items = await db.get_all_items()
+    
+    product = next((i for i in items if str(i.get('Артикул')) == str(article)), None)
     
     if not product:
-        await bot.send_message(user_id, "❌ Товар не знайдено в базі.")
+        await bot.send_message(user_id, "❌ Товар не знайдено.")
         return
 
     total = len(product_ids)
@@ -39,7 +46,6 @@ async def show_product(bot, user_id, index, state, message_to_edit=None):
         f"⠀🆔 Артикул: <code>{product.get('Артикул')}</code>"
     )
     
-    # Чистимо посилання на фото
     photo_field = str(product.get('Фото', ''))
     photos = [p.strip() for p in photo_field.split(',') if p.strip() and p.lower() != 'none']
     photo = photos[0] if photos else None
@@ -52,11 +58,11 @@ async def show_product(bot, user_id, index, state, message_to_edit=None):
                 try:
                     media = types.InputMediaPhoto(photo, caption=caption, parse_mode="HTML")
                     await bot.edit_message_media(chat_id=user_id, message_id=message_to_edit, media=media, reply_markup=markup)
-                except Exception as e:
-                    # Якщо не вдалося відредагувати (наприклад, те саме фото), просто шлемо нове
-                    await bot.send_photo(user_id, photo, caption=caption, parse_mode="HTML", reply_markup=markup)
+                except Exception:
+                    # Якщо ліміти телеграма або те саме фото - просто ігноруємо помилку редагування
+                    pass
             else:
-                await bot.send_message(user_id, f"🖼 (Фото очікується)\n\n{caption}", parse_mode="HTML", reply_markup=markup)
+                await bot.edit_message_text(chat_id=user_id, message_id=message_to_edit, text=f"🖼 (Фото очікується)\n\n{caption}", parse_mode="HTML", reply_markup=markup)
         else:
             if photo:
                 await bot.send_photo(user_id, photo, caption=caption, parse_mode="HTML", reply_markup=markup)
@@ -64,7 +70,6 @@ async def show_product(bot, user_id, index, state, message_to_edit=None):
                 await bot.send_message(user_id, f"🖼 (Фото очікується)\n\n{caption}", parse_mode="HTML", reply_markup=markup)
     except Exception as e:
         logger.error(f"Error in show_product: {e}")
-        # Запасний варіант — просто текст
         await bot.send_message(user_id, caption, parse_mode="HTML", reply_markup=markup)
 
 async def show_more_photos(callback_query, state, ALL_PRODUCTS, bot):
@@ -74,7 +79,6 @@ async def show_more_photos(callback_query, state, ALL_PRODUCTS, bot):
     data = await state.get_data()
     last_album = data.get('last_album_ids', [])
     
-    # Видаляємо старі фото альбому
     for msg_id in last_album:
         try: await bot.delete_message(user_id, msg_id)
         except: pass
@@ -107,13 +111,12 @@ async def show_novinki(message, state, ALL_PRODUCTS, bot):
     
     ids = [str(i.get('Артикул')) for i in novinki if i.get('Артикул')]
     await state.update_data(product_ids=ids, size="Всі новинки", last_album_ids=[])
-    await show_product(bot, message.from_user.id, 0, state)
+    # Передаємо ALL_PRODUCTS як кеш
+    await show_product(bot, message.from_user.id, 0, state, all_products=ALL_PRODUCTS)
 
 async def show_brands(message, state, ALL_PRODUCTS):
-    # Тут ми вже отримуємо "чисту" категорію з main.py
     data = await state.get_data()
     category = data.get('category', 'Чоловічі')
-    
     await state.update_data(last_album_ids=[])
     
     brands = sorted(list(set([
@@ -132,7 +135,6 @@ async def choose_size(message, state, ALL_PRODUCTS):
     category = user_data.get('category', 'Чоловічі')
     
     await state.update_data(brand=brand)
-    
     sizes = db.get_available_sizes(ALL_PRODUCTS, category, brand) 
     
     if not sizes:
