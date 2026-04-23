@@ -40,6 +40,14 @@ def _product_caption(product):
     )
 
 
+def _parse_photo_ids(raw_photos):
+    raw = str(raw_photos or "")
+    for delimiter in (";", "\n", "\r"):
+        raw = raw.replace(delimiter, ",")
+    photos = [photo.strip() for photo in raw.split(",") if photo.strip() and photo.strip().lower() != "none"]
+    return list(dict.fromkeys(photos))
+
+
 class AddProductState(StatesGroup):
     waiting_for_article = State()
     waiting_for_brand = State()
@@ -198,13 +206,10 @@ async def save_stock(message: types.Message, state: FSMContext):
     )
 
     first_photo = data["photo_ids"][0]
-    await message.answer_photo(first_photo, caption=preview_text, reply_markup=kb.get_confirm_keyboard(), parse_mode="HTML")
+    await message.answer_photo(first_photo, caption=preview_text, reply_markup=kb.get_save_or_publish_keyboard(), parse_mode="HTML")
 
 
-async def confirm_save_product(callback_query: types.CallbackQuery, state: FSMContext):
-    if not is_admin(callback_query.from_user.id):
-        return await callback_query.answer("Немає доступу.", show_alert=True)
-
+async def _save_product_from_state(state: FSMContext):
     data = await state.get_data()
     payload = {
         "article": data["article"],
@@ -219,7 +224,14 @@ async def confirm_save_product(callback_query: types.CallbackQuery, state: FSMCo
         "status": "draft",
         "stock": data["stock"],
     }
-    result = await db.create_product(payload)
+    return await db.create_product(payload), payload
+
+
+async def confirm_save_product(callback_query: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback_query.from_user.id):
+        return await callback_query.answer("Немає доступу.", show_alert=True)
+
+    result, _ = await _save_product_from_state(state)
     await state.finish()
 
     if result is None:
@@ -235,6 +247,29 @@ async def confirm_save_product(callback_query: types.CallbackQuery, state: FSMCo
     await callback_query.answer()
 
 
+async def save_and_publish_product(callback_query: types.CallbackQuery, state: FSMContext, bot):
+    if not is_admin(callback_query.from_user.id):
+        return await callback_query.answer("Немає доступу.", show_alert=True)
+
+    result, payload = await _save_product_from_state(state)
+    await state.finish()
+
+    if result is None:
+        await callback_query.message.answer(
+            "Не вдалося зберегти товар у Google Sheets. Перевірте GAS.",
+            reply_markup=_main_menu_for(callback_query.from_user.id),
+        )
+        return await callback_query.answer()
+
+    await callback_query.message.answer("✅ Товар збережено. Відкриваю прев'ю перед публікацією...")
+    product = await db.get_product_by_article(payload["article"])
+    if not product:
+        return await callback_query.answer("Товар збережено, але не вдалося завантажити прев'ю.", show_alert=True)
+
+    await send_publish_preview(callback_query.message.chat.id, product, bot)
+    await callback_query.answer()
+
+
 async def cancel_admin_flow(event, state: FSMContext):
     user_id = event.from_user.id
     await state.finish()
@@ -247,17 +282,58 @@ async def cancel_admin_flow(event, state: FSMContext):
 
 
 async def start_publish_product(message: types.Message):
-    if not is_admin(message.from_user.id):
-        return await message.answer("У вас немає доступу до цієї дії.")
+    await send_publish_list(message.answer, message.from_user.id)
+
+
+async def send_publish_list(answer_method, user_id):
+    if not is_admin(user_id):
+        return await answer_method("У вас немає доступу до цієї дії.")
 
     products = await db.get_products()
     publishable = [
         product for product in products if str(product.get("status", "draft")).strip().lower() in {"draft", "unpublished"}
     ]
     if not publishable:
-        return await message.answer("Немає товарів у статусі draft/unpublished.")
+        return await answer_method("Немає товарів у статусі draft/unpublished.")
 
-    await message.answer("Оберіть товар для публікації:", reply_markup=kb.get_publish_products_keyboard(publishable))
+    publishable.sort(key=lambda product: str(product.get("article", product.get("Артикул", ""))), reverse=True)
+    summary_lines = [
+        f"• <code>{product.get('Артикул', '')}</code> | {product.get('Бренд', '')} {product.get('Модель', '')} | {product.get('Ціна', '')} грн"
+        for product in publishable[:20]
+    ]
+    text = "Оберіть товар для публікації:\n\n" + "\n".join(summary_lines)
+    await answer_method(text, parse_mode="HTML", reply_markup=kb.get_publish_products_keyboard(publishable))
+
+
+async def send_publish_preview(chat_id, product, bot):
+    article = str(product.get("Артикул", "")).strip()
+    caption = (
+        f"Прев'ю перед публікацією:\n\n"
+        f"{_product_caption(product)}\n\n"
+        f"Статус: <b>{product.get('Статус') or product.get('status') or 'draft'}</b>"
+    )
+    photos = _parse_photo_ids(product.get("Фото", ""))
+    preview_photo = photos[0] if photos else "https://via.placeholder.com/500"
+    await bot.send_photo(
+        chat_id,
+        photo=preview_photo,
+        caption=caption,
+        parse_mode="HTML",
+        reply_markup=kb.get_publish_preview_keyboard(article),
+    )
+
+
+async def preview_publish_product(callback_query: types.CallbackQuery, bot):
+    if not is_admin(callback_query.from_user.id):
+        return await callback_query.answer("Немає доступу.", show_alert=True)
+
+    article = callback_query.data.replace("preview_publish_", "", 1).strip()
+    product = await db.get_product_by_article(article)
+    if not product:
+        return await callback_query.answer("Товар не знайдено.", show_alert=True)
+
+    await send_publish_preview(callback_query.message.chat.id, product, bot)
+    await callback_query.answer()
 
 
 async def publish_selected_product(callback_query: types.CallbackQuery, bot):
@@ -272,7 +348,7 @@ async def publish_selected_product(callback_query: types.CallbackQuery, bot):
     if not product:
         return await callback_query.answer("Товар не знайдено.", show_alert=True)
 
-    photo_ids = [photo.strip() for photo in str(product.get("Фото", "")).split(",") if photo.strip()]
+    photo_ids = _parse_photo_ids(product.get("Фото", ""))
     sent_message = await bot.send_photo(
         SHOP_GROUP_ID,
         photo=photo_ids[0] if photo_ids else "https://via.placeholder.com/500",
