@@ -10,6 +10,10 @@ logger = logging.getLogger("TurboBot.Database")
 HTTP_TIMEOUT = aiohttp.ClientTimeout(total=15)
 
 
+def _is_successful_response(data: Any) -> bool:
+    return data is not None and (not isinstance(data, dict) or data.get("ok", True) is not False)
+
+
 def _normalize_product(item: dict[str, Any]) -> dict[str, Any]:
     product = dict(item or {})
 
@@ -66,6 +70,9 @@ def _extract_products(data: Any) -> list[dict[str, Any]]:
             value = data.get(key)
             if isinstance(value, list):
                 return [_normalize_product(item) for item in value if isinstance(item, dict)]
+        item = data.get("item")
+        if isinstance(item, dict):
+            return [_normalize_product(item)]
         if data.get("article") or data.get("Артикул"):
             return [_normalize_product(data)]
 
@@ -105,7 +112,6 @@ async def get_products():
 
 
 async def get_all_items():
-    """Backward-compatible catalog loader used by the current cache."""
     return await get_products()
 
 
@@ -125,32 +131,63 @@ async def get_product_by_article(article: str):
 
 async def create_product(payload: dict[str, Any]):
     request_payload = {**payload, "action": "create_product"}
-    return await _request_json("POST", payload=request_payload)
+    data = await _request_json("POST", payload=request_payload)
+    if not _is_successful_response(data):
+        logger.error("create_product failed: %s", data)
+        return None
+    return data
 
 
 async def create_order(payload: dict[str, Any]):
     request_payload = {**payload, "action": "create_order"}
     data = await _request_json("POST", payload=request_payload)
-    if data is not None:
+    if _is_successful_response(data):
         return data
+    logger.warning("Structured create_order failed, trying legacy payload: %s", data)
 
-    # Backward compatibility with the legacy order endpoint.
-    return await _request_json("POST", payload=payload)
+    legacy_payload = {
+        "article": payload.get("article", ""),
+        "item": payload.get("item", ""),
+        "size": payload.get("size", ""),
+        "price": payload.get("price", ""),
+        "fio": payload.get("customer_name", ""),
+        "phone": payload.get("phone", ""),
+        "delivery": payload.get("delivery", ""),
+        "user": payload.get("telegram_username", ""),
+        "source": payload.get("source", "direct"),
+    }
+    data = await _request_json("POST", payload=legacy_payload)
+    if not _is_successful_response(data):
+        logger.error("Legacy create_order failed: %s", data)
+        return None
+    return data
 
 
 async def register_user(payload: dict[str, Any]):
     request_payload = {**payload, "action": "register_user"}
-    return await _request_json("POST", payload=request_payload)
+    data = await _request_json("POST", payload=request_payload)
+    if not _is_successful_response(data):
+        logger.error("register_user failed: %s", data)
+        return None
+    return data
 
 
 async def create_post_log(payload: dict[str, Any]):
     request_payload = {**payload, "action": "create_post_log"}
-    return await _request_json("POST", payload=request_payload)
+    data = await _request_json("POST", payload=request_payload)
+    if not _is_successful_response(data):
+        logger.error("create_post_log failed: %s", data)
+        return None
+    return data
 
 
 async def update_product_status(article: str, status: str):
     payload = {"action": "update_product_status", "article": article, "status": status}
-    return await _request_json("POST", payload=payload)
+    data = await _request_json("POST", payload=payload)
+    if not _is_successful_response(data):
+        logger.warning("update_product_status failed: %s", data)
+        return None
+    return data
 
 
 async def get_stats():
@@ -158,7 +195,6 @@ async def get_stats():
 
 
 def get_available_sizes(all_products, category, brand_name):
-    """Швидка фільтрація розмірів без зайвих алокацій."""
     if not all_products:
         return []
 
@@ -180,4 +216,3 @@ def get_available_sizes(all_products, category, brand_name):
         )
     except Exception:
         return sorted(list(sizes))
-
