@@ -180,3 +180,4 @@ def get_available_sizes(all_products, category, brand_name):
         )
     except Exception:
         return sorted(list(sizes))
+
