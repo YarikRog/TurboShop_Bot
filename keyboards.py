@@ -77,11 +77,27 @@ def get_confirm_keyboard(confirm_data="admin_save_product", cancel_data="admin_c
     return keyboard
 
 
+def get_save_or_publish_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    keyboard.row(InlineKeyboardButton(text="✅ Зберегти", callback_data="admin_save_product"))
+    keyboard.row(InlineKeyboardButton(text="📤 Зберегти і опублікувати", callback_data="admin_save_and_publish_product"))
+    keyboard.row(InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel_product"))
+    return keyboard
+
+
 def get_publish_products_keyboard(products):
     keyboard = InlineKeyboardMarkup(row_width=1)
     for product in products[:20]:
         article = str(product.get("Артикул", "")).strip()
-        title = f"{article} | {product.get('Бренд', '')} {product.get('Модель', '')} | {product.get('Ціна', '')} грн"
-        keyboard.add(InlineKeyboardButton(text=title[:64], callback_data=f"publish_{article}"))
+        title = f"{article} | {product.get('Бренд', '')} {product.get('Модель', '')}"
+        keyboard.add(InlineKeyboardButton(text=title[:64], callback_data=f"preview_publish_{article}"))
     keyboard.add(InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel_publish"))
+    return keyboard
+
+
+def get_publish_preview_keyboard(article):
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    keyboard.row(InlineKeyboardButton(text="📤 Опублікувати в групу", callback_data=f"publish_{article}"))
+    keyboard.row(InlineKeyboardButton(text="⬅️ Назад до списку", callback_data="back_to_publish_list"))
+    keyboard.row(InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel_publish"))
     return keyboard
