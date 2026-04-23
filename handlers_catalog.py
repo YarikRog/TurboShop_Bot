@@ -1,10 +1,15 @@
 import logging
 import asyncio
 from aiogram import types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import keyboards as kb
 
 logger = logging.getLogger("TurboBot.Catalog")
+
+
+def _parse_sizes(raw_sizes):
+    raw = str(raw_sizes or "").replace(";", ",")
+    return [size.strip() for size in raw.split(",") if size.strip() and size.strip().lower() != "none"]
+
 
 async def show_product(bot, user_id, index, state, message_to_edit=None, all_products=None):
     if not all_products:
@@ -32,16 +37,25 @@ async def show_product(bot, user_id, index, state, message_to_edit=None, all_pro
 
     caption = (
         f"⠀👟 <b>{product.get('Бренд')} {product.get('Модель') or product.get('Model', '')}</b>\n"
+        f"⠀🗂 Категорія: <b>{product.get('Категорія') or '—'}</b>\n"
         f"⠀💰 Ціна: <b>{product.get('Ціна')} грн</b>\n"
         f"⠀📏 Розмір: <b>{current_size}</b>\n"
         f"⠀🆔 Артикул: <code>{article}</code>"
     )
+
+    description = str(product.get("Опис", "")).strip()
+    if description:
+        caption += f"\n⠀📝 {description[:250]}"
     
     photo_raw = str(product.get('Фото', ''))
     photos = [p.strip() for p in photo_raw.split(',') if p.strip() and p.lower() != 'none']
     photo = photos[0] if photos else "https://via.placeholder.com/500"
 
-    markup = kb.get_product_navigation(index, len(product_ids), article)
+    available_sizes = _parse_sizes(product.get("Розміри", ""))
+    show_size_picker = bool(available_sizes) and (
+        len(product_ids) == 1 or current_size in ["—", "Оберіть розмір", "New Arrivals", "Не вказано"]
+    )
+    markup = kb.get_product_navigation(index, len(product_ids), article, available_sizes, current_size, show_size_picker)
 
     try:
         if message_to_edit:
@@ -85,7 +99,7 @@ async def show_more_photos(callback_query, state, ALL_PRODUCTS, bot):
 async def show_novinki(message, state, ALL_PRODUCTS, bot):
     novinki = ALL_PRODUCTS[-12:] # Беремо трохи більше для вибору
     ids = [str(i.get('Артикул')) for i in novinki if i.get('Артикул')]
-    await state.update_data(product_ids=ids, size="New Arrivals", last_album_ids=[])
+    await state.update_data(product_ids=ids, size="Оберіть розмір", last_album_ids=[])
     await show_product(bot, message.from_user.id, 0, state, all_products=ALL_PRODUCTS)
 
 async def show_brands(message, state, ALL_PRODUCTS):
@@ -109,3 +123,18 @@ async def choose_size(message, state, ALL_PRODUCTS):
     sizes = sorted(list(set(all_sizes)))
     if not sizes: return await message.answer("Розміри відсутні.")
     await message.answer(f"Оберіть розмір {brand}:", reply_markup=kb.get_sizes_keyboard(sizes))
+
+
+async def select_product_size(callback_query, state, all_products, bot):
+    payload = callback_query.data.replace("picksize_", "", 1)
+    if ":" not in payload:
+        return await callback_query.answer("Некоректний розмір.", show_alert=True)
+
+    article, size = payload.split(":", 1)
+    product = next((item for item in all_products if str(item.get("Артикул", "")).strip() == article.strip()), None)
+    if not product:
+        return await callback_query.answer("Товар не знайдено.", show_alert=True)
+
+    await state.update_data(product_ids=[article.strip()], size=size.strip(), current_index=0)
+    await show_product(bot, callback_query.from_user.id, 0, state, callback_query.message.message_id, all_products=all_products)
+    await callback_query.answer(f"Розмір {size.strip()} обрано")
