@@ -172,6 +172,12 @@ async def publish_product_h(m: types.Message):
     await admin.start_publish_product(m)
 
 
+@dp.message_handler(lambda m: m.text == "📅 Розпланувати всі пости", state="*")
+async def schedule_all_posts_h(m: types.Message):
+    await admin.schedule_all_posts(m)
+    await cache.update()
+
+
 @dp.callback_query_handler(lambda c: c.data.startswith("size_"), state="*")
 async def size_select_h(c: types.CallbackQuery, state: FSMContext):
     size = c.data.replace("size_", "")
@@ -314,6 +320,17 @@ async def admin_publish_back_h(c: types.CallbackQuery):
 @dp.callback_query_handler(lambda c: c.data.startswith("preview_publish_"), state="*")
 async def admin_publish_preview_h(c: types.CallbackQuery):
     await admin.preview_publish_product(c, bot)
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("schedule_product_"), state="*")
+async def admin_schedule_product_h(c: types.CallbackQuery):
+    await admin.start_schedule_product(c, bot)
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("schedule_one_"), state="*")
+async def admin_schedule_one_product_h(c: types.CallbackQuery):
+    await admin.schedule_one_product(c)
+    await cache.update()
 
 
 @dp.callback_query_handler(lambda c: c.data.startswith("edit_product_"), state="*")
