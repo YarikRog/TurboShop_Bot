@@ -79,8 +79,33 @@ def get_confirm_keyboard(confirm_data="admin_save_product", cancel_data="admin_c
 
 def get_save_or_publish_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=1)
+    keyboard.row(InlineKeyboardButton(text="✏️ Змінити", callback_data="admin_edit_draft_product"))
     keyboard.row(InlineKeyboardButton(text="✅ Зберегти", callback_data="admin_save_product"))
     keyboard.row(InlineKeyboardButton(text="📤 Зберегти і опублікувати", callback_data="admin_save_and_publish_product"))
+    keyboard.row(InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel_product"))
+    return keyboard
+
+
+def get_draft_edit_fields_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=2)
+
+    fields = [
+        ("Артикул", "article"),
+        ("Бренд", "brand"),
+        ("Модель", "model"),
+        ("Категорія", "category"),
+        ("Сезон", "season"),
+        ("Ціна", "price"),
+        ("Розміри", "sizes"),
+        ("Опис", "description"),
+        ("Фото", "photo_ids"),
+        ("Залишок", "stock"),
+    ]
+
+    for title, field in fields:
+        keyboard.insert(InlineKeyboardButton(text=title, callback_data=f"admin_edit_draft_field_{field}"))
+
+    keyboard.row(InlineKeyboardButton(text="⬅️ Назад до перевірки", callback_data="admin_back_to_draft_preview"))
     keyboard.row(InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel_product"))
     return keyboard
 
@@ -88,16 +113,49 @@ def get_save_or_publish_keyboard():
 def get_publish_products_keyboard(products):
     keyboard = InlineKeyboardMarkup(row_width=1)
     for product in products[:20]:
-        article = str(product.get("Артикул", "")).strip()
-        title = f"{article} | {product.get('Бренд', '')} {product.get('Модель', '')}"
+        article = str(product.get("Артикул") or product.get("article") or "").strip()
+        brand = str(product.get("Бренд") or product.get("brand") or "").strip()
+        model = str(product.get("Модель") or product.get("model") or "").strip()
+        status = str(product.get("Статус") or product.get("status") or "draft").strip()
+
+        if not article:
+            continue
+
+        title = f"{article} | {brand} {model} | {status}"
         keyboard.add(InlineKeyboardButton(text=title[:64], callback_data=f"preview_publish_{article}"))
+
     keyboard.add(InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel_publish"))
     return keyboard
 
 
 def get_publish_preview_keyboard(article):
     keyboard = InlineKeyboardMarkup(row_width=1)
+    keyboard.row(InlineKeyboardButton(text="✏️ Змінити", callback_data=f"edit_product_{article}"))
     keyboard.row(InlineKeyboardButton(text="📤 Опублікувати в групу", callback_data=f"publish_{article}"))
     keyboard.row(InlineKeyboardButton(text="⬅️ Назад до списку", callback_data="back_to_publish_list"))
+    keyboard.row(InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel_publish"))
+    return keyboard
+
+
+def get_saved_edit_fields_keyboard(article):
+    keyboard = InlineKeyboardMarkup(row_width=2)
+
+    fields = [
+        ("Бренд", "brand"),
+        ("Модель", "model"),
+        ("Категорія", "category"),
+        ("Сезон", "season"),
+        ("Ціна", "price"),
+        ("Розміри", "sizes"),
+        ("Опис", "description"),
+        ("Фото", "photo_ids"),
+        ("Залишок", "stock"),
+        ("Статус", "status"),
+    ]
+
+    for title, field in fields:
+        keyboard.insert(InlineKeyboardButton(text=title, callback_data=f"edit_saved_field_{article}_{field}"))
+
+    keyboard.row(InlineKeyboardButton(text="⬅️ Назад до прев’ю", callback_data=f"preview_publish_{article}"))
     keyboard.row(InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel_publish"))
     return keyboard
