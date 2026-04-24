@@ -3,12 +3,14 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 
 def main_menu(is_admin=False):
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.row(KeyboardButton("👟 Чоловічі"), KeyboardButton("👠 Жіночі"))
-    keyboard.row(KeyboardButton("🔥 Наші новинки"), KeyboardButton("🎯 Підібрати пару"))
-    keyboard.row(KeyboardButton("🛒 Кошик"), KeyboardButton("💬 Менеджер"))
+
     if is_admin:
         keyboard.row(KeyboardButton("➕ Додати товар"), KeyboardButton("📤 Опублікувати товар"))
         keyboard.row(KeyboardButton("📅 Розпланувати всі пости"))
+        keyboard.row(KeyboardButton("🔥 Наші новинки"), KeyboardButton("💬 Менеджер"))
+        return keyboard
+
+    keyboard.row(KeyboardButton("🔥 Наші новинки"), KeyboardButton("💬 Менеджер"))
     return keyboard
 
 
@@ -45,8 +47,7 @@ def get_product_navigation(index, total, article, sizes=None, current_size=None,
         btns.append(InlineKeyboardButton(text="➡️", callback_data=f"next_{index}"))
     keyboard.row(*btns)
 
-    keyboard.row(InlineKeyboardButton(text="📝 ОПИС ТА СКЛАД", callback_data=f"descr_{article}"))
-    keyboard.row(InlineKeyboardButton(text="💎 ЗАМОВИТИ ЦЮ МОДЕЛЬ 💎", callback_data=f"buy_{article}"))
+    keyboard.row(InlineKeyboardButton(text="🛒 Оформити замовлення", callback_data=f"buy_{article}"))
     keyboard.row(
         InlineKeyboardButton(text="📸 ВСІ ФОТО", callback_data=f"more_photos_{article}"),
         InlineKeyboardButton(text="📐 РОЗМІРНА СІТКА", callback_data="show_grid_alert")
@@ -143,11 +144,13 @@ def get_publish_products_keyboard(products):
         brand = str(product.get("Бренд") or product.get("brand") or "").strip()
         model = str(product.get("Модель") or product.get("model") or "").strip()
         status = str(product.get("Статус") or product.get("status") or "draft").strip()
+        publish_status = str(product.get("publish_status") or "").strip()
 
         if not article:
             continue
 
-        title = f"{article} | {brand} {model} | {status}"
+        suffix = f" | {publish_status}" if publish_status else ""
+        title = f"{article} | {brand} {model} | {status}{suffix}"
         keyboard.add(InlineKeyboardButton(text=title[:64], callback_data=f"preview_publish_{article}"))
 
     keyboard.add(InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel_publish"))
