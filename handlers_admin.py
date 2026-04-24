@@ -19,6 +19,7 @@ ADMIN_IDS = {int(item.strip()) for item in os.getenv("ADMIN_IDS", "").split(",")
 SHOP_GROUP_ID = os.getenv("SHOP_GROUP_ID")
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 SLOT_HOURS = (9, 15, 20)
+PUBLISH_PAGE_SIZE = 10
 
 MEDIA_GROUP_BUFFER = {}
 MEDIA_GROUP_TASKS = {}
@@ -210,6 +211,109 @@ def _saved_edit_menu_text(product):
     )
 
 
+def _filter_products_for_publish(products, filter_name):
+    result = []
+
+    for product in products:
+        article = _get_article(product)
+        status = _get_status(product).lower()
+        publish_status = _get_publish_status(product).lower()
+
+        if not article:
+            continue
+
+        if status in {"hidden", "sold_out"}:
+            continue
+
+        if filter_name == "all":
+            result.append(product)
+        elif filter_name == "draft":
+            if status in {"draft", "unpublished"} and publish_status not in {"queued", "published"}:
+                result.append(product)
+        elif filter_name == "queued":
+            if publish_status == "queued":
+                result.append(product)
+        elif filter_name == "published":
+            if status == "published" or publish_status == "published":
+                result.append(product)
+
+    result.sort(key=lambda product: _get_article(product), reverse=True)
+    return result
+
+
+def _search_products(products, query):
+    q = str(query or "").strip().lower()
+    if not q:
+        return []
+
+    result = []
+    for product in products:
+        searchable = " ".join(
+            [
+                str(product.get("Артикул") or product.get("article") or ""),
+                str(product.get("Бренд") or product.get("brand") or ""),
+                str(product.get("Модель") or product.get("model") or ""),
+                str(product.get("Категорія") or product.get("category") or ""),
+                str(product.get("Ціна") or product.get("price") or ""),
+            ]
+        ).lower()
+
+        if q in searchable:
+            result.append(product)
+
+    result.sort(key=lambda product: _get_article(product), reverse=True)
+    return result
+
+
+def _paginate(items, page, page_size=PUBLISH_PAGE_SIZE):
+    total = len(items)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page = max(0, min(int(page or 0), total_pages - 1))
+    start = page * page_size
+    end = start + page_size
+    return items[start:end], page, total_pages, total
+
+
+async def _send_publish_page(answer_method, products, filter_name="all", page=0):
+    filtered = _filter_products_for_publish(products, filter_name)
+    page_items, page, total_pages, total = _paginate(filtered, page)
+
+    labels = {
+        "all": "Усі товари",
+        "draft": "Чернетки",
+        "queued": "Заплановані",
+        "published": "Опубліковані",
+    }
+
+    if not filtered:
+        return await answer_method(
+            f"У фільтрі «{labels.get(filter_name, filter_name)}» товарів немає.",
+            reply_markup=kb.get_publish_filter_keyboard(),
+        )
+
+    lines = []
+    for product in page_items:
+        article = _get_article(product)
+        brand = product.get("Бренд") or product.get("brand") or ""
+        model = product.get("Модель") or product.get("model") or ""
+        price = product.get("Ціна") or product.get("price") or ""
+        status = _get_publish_status(product) or _get_status(product)
+        lines.append(f"• <code>{article}</code> | {brand} {model} | {price} грн | <b>{status}</b>")
+
+    text = (
+        f"{labels.get(filter_name, filter_name)}\n"
+        f"Знайдено: <b>{total}</b>\n"
+        f"Сторінка: <b>{page + 1}/{total_pages}</b>\n\n"
+        + "\n".join(lines)
+    )
+
+    await answer_method(
+        text,
+        parse_mode="HTML",
+        reply_markup=kb.get_publish_products_keyboard(page_items, page, filter_name, total_pages),
+    )
+
+
 async def _send_album_or_photo(bot, chat_id, photos, caption, reply_markup=None, action_text="Оформити замовлення 👇"):
     photos = list(dict.fromkeys([str(photo).strip() for photo in photos if str(photo).strip()]))
 
@@ -313,6 +417,10 @@ class EditDraftState(StatesGroup):
 class EditSavedState(StatesGroup):
     waiting_for_value = State()
     waiting_for_photos = State()
+
+
+class PublishSearchState(StatesGroup):
+    waiting_for_query = State()
 
 
 async def start_add_product(message: types.Message, state: FSMContext):
@@ -661,7 +769,99 @@ async def cancel_admin_flow(event, state: FSMContext):
 
 
 async def start_publish_product(message: types.Message):
-    await send_publish_list(message.answer, message.from_user.id)
+    if not is_admin(message.from_user.id):
+        return await message.answer("У вас немає доступу до цієї дії.")
+
+    await message.answer(
+        "Оберіть, як знайти товар для публікації:",
+        reply_markup=kb.get_publish_filter_keyboard(),
+    )
+
+
+async def show_publish_filters(callback_query: types.CallbackQuery):
+    if not is_admin(callback_query.from_user.id):
+        return await callback_query.answer("Немає доступу.", show_alert=True)
+
+    await callback_query.answer()
+    await callback_query.message.answer(
+        "Оберіть, як знайти товар для публікації:",
+        reply_markup=kb.get_publish_filter_keyboard(),
+    )
+
+
+async def send_publish_filtered_page(callback_query: types.CallbackQuery):
+    if not is_admin(callback_query.from_user.id):
+        return await callback_query.answer("Немає доступу.", show_alert=True)
+
+    await callback_query.answer()
+
+    raw = callback_query.data.replace("publish_filter_", "", 1)
+
+    try:
+        filter_name, page_raw = raw.rsplit("_", 1)
+        page = int(page_raw)
+    except ValueError:
+        filter_name = "all"
+        page = 0
+
+    if filter_name not in {"all", "draft", "queued", "published"}:
+        filter_name = "all"
+
+    products = await db.get_products()
+    await _send_publish_page(callback_query.message.answer, products, filter_name, page)
+
+
+async def start_publish_search(callback_query: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback_query.from_user.id):
+        return await callback_query.answer("Немає доступу.", show_alert=True)
+
+    await callback_query.answer()
+    await PublishSearchState.waiting_for_query.set()
+
+    await callback_query.message.answer(
+        "🔎 Введіть артикул, бренд, модель або категорію товару:",
+        reply_markup=kb.get_cancel_keyboard(),
+    )
+
+
+async def handle_publish_search_query(message: types.Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return await message.answer("У вас немає доступу до цієї дії.")
+
+    query = str(message.text or "").strip()
+
+    if len(query) < 2:
+        return await message.answer("Введіть мінімум 2 символи для пошуку.")
+
+    products = await db.get_products()
+    results = _search_products(products, query)
+
+    await state.finish()
+
+    if not results:
+        return await message.answer(
+            f"За запитом «{query}» нічого не знайдено.",
+            reply_markup=kb.get_publish_filter_keyboard(),
+        )
+
+    lines = []
+    for product in results[:20]:
+        article = _get_article(product)
+        brand = product.get("Бренд") or product.get("brand") or ""
+        model = product.get("Модель") or product.get("model") or ""
+        price = product.get("Ціна") or product.get("price") or ""
+        status = _get_publish_status(product) or _get_status(product)
+        lines.append(f"• <code>{article}</code> | {brand} {model} | {price} грн | <b>{status}</b>")
+
+    extra = ""
+    if len(results) > 20:
+        extra = f"\n\nПоказано перші 20 з {len(results)}. Уточніть запит, якщо треба."
+
+    await message.answer(
+        f"🔎 Результати пошуку: <b>{len(results)}</b>\n\n" + "\n".join(lines) + extra,
+        parse_mode="HTML",
+        reply_markup=kb.get_publish_search_results_keyboard(results),
+    )
 
 
 async def schedule_all_posts(message: types.Message):
@@ -714,33 +914,7 @@ async def send_publish_list(answer_method, user_id):
         return await answer_method("У вас немає доступу до цієї дії.")
 
     products = await db.get_products()
-
-    publishable = []
-    for product in products:
-        article = _get_article(product)
-        status = _get_status(product).lower()
-
-        if article and status not in {"hidden", "sold_out"}:
-            publishable.append(product)
-
-    if not publishable:
-        return await answer_method("Немає товарів для публікації. Перевірте, чи товари не hidden/sold_out.")
-
-    publishable.sort(key=lambda product: _get_article(product), reverse=True)
-
-    summary_lines = [
-        (
-            f"• <code>{_get_article(product)}</code> | "
-            f"{product.get('Бренд') or product.get('brand') or ''} "
-            f"{product.get('Модель') or product.get('model') or ''} | "
-            f"{product.get('Ціна') or product.get('price') or ''} грн | "
-            f"<b>{_get_status(product)}</b>"
-        )
-        for product in publishable[:20]
-    ]
-
-    text = "Оберіть товар для публікації:\n\n" + "\n".join(summary_lines)
-    await answer_method(text, parse_mode="HTML", reply_markup=kb.get_publish_products_keyboard(publishable))
+    await _send_publish_page(answer_method, products, "all", 0)
 
 
 async def send_publish_preview(chat_id, product, bot):
