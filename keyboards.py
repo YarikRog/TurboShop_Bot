@@ -68,6 +68,30 @@ def get_cancel_keyboard(*extra_buttons):
     return keyboard
 
 
+def get_order_confirmation_keyboard():
+    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.row(KeyboardButton("✅ Підтвердити замовлення"))
+    keyboard.row(KeyboardButton("✏️ Змінити телефон"), KeyboardButton("✏️ Змінити ім’я"))
+    keyboard.row(KeyboardButton("✏️ Змінити доставку"))
+    keyboard.row(KeyboardButton("❌ Скасувати"))
+    return keyboard
+
+
+def get_after_order_keyboard(manager_username=None, is_admin=False):
+    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
+
+    if manager_username:
+        username = str(manager_username).strip().replace("@", "")
+        keyboard.row(KeyboardButton(f"💬 Написати менеджеру @{username}"))
+
+    keyboard.row(KeyboardButton("🏠 Головне меню"))
+
+    if is_admin:
+        keyboard.row(KeyboardButton("➕ Додати товар"), KeyboardButton("📤 Опублікувати товар"))
+
+    return keyboard
+
+
 def get_confirm_keyboard(confirm_data="admin_save_product", cancel_data="admin_cancel_product"):
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.row(
