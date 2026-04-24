@@ -94,10 +94,7 @@ async def start_cmd(m: types.Message, state: FSMContext):
                 source=source,
                 last_album_ids=[]
             )
-            await m.answer(
-                "Вітаємо у TurboShop! 👟",
-                reply_markup=kb.main_menu(admin.is_admin(m.from_user.id))
-            )
+
             await catalog.show_product(
                 bot,
                 m.from_user.id,
@@ -112,7 +109,7 @@ async def start_cmd(m: types.Message, state: FSMContext):
             )
     else:
         await m.answer(
-            "Вітаємо у TurboShop! 👟",
+            "Вітаємо у TurboShop! 👟\n\nОберіть дію:",
             reply_markup=kb.main_menu(admin.is_admin(m.from_user.id))
         )
 
@@ -148,6 +145,15 @@ async def cancel_flow(m: types.Message, state: FSMContext):
 @dp.message_handler(lambda m: m.text == "🔥 Наші новинки", state="*")
 async def novinki_h(m: types.Message, state: FSMContext):
     await catalog.show_novinki(m, state, cache.get_all(), bot)
+
+
+@dp.message_handler(lambda m: m.text == "💬 Менеджер", state="*")
+async def manager_h(m: types.Message):
+    username = os.getenv("MANAGER_USERNAME", "").strip().replace("@", "")
+    if username:
+        await m.answer(f"Напишіть менеджеру: @{username}")
+    else:
+        await m.answer("Менеджер скоро буде доданий. Поки можете написати нам у чаті.")
 
 
 @dp.message_handler(lambda m: m.text in ["👟 Чоловічі", "👠 Жіночі"], state="*")
