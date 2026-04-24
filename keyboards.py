@@ -137,23 +137,72 @@ def get_draft_edit_fields_keyboard():
     return keyboard
 
 
-def get_publish_products_keyboard(products):
+def get_publish_filter_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=1)
-    for product in products[:20]:
+    keyboard.row(InlineKeyboardButton(text="🔎 Пошук товару", callback_data="publish_search"))
+    keyboard.row(InlineKeyboardButton(text="📝 Чернетки", callback_data="publish_filter_draft_0"))
+    keyboard.row(InlineKeyboardButton(text="🕒 Заплановані", callback_data="publish_filter_queued_0"))
+    keyboard.row(InlineKeyboardButton(text="✅ Опубліковані", callback_data="publish_filter_published_0"))
+    keyboard.row(InlineKeyboardButton(text="📦 Усі товари", callback_data="publish_filter_all_0"))
+    keyboard.row(InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel_publish"))
+    return keyboard
+
+
+def get_publish_products_keyboard(products, page=0, filter_name="all", total_pages=1):
+    keyboard = InlineKeyboardMarkup(row_width=1)
+
+    for product in products:
         article = str(product.get("Артикул") or product.get("article") or "").strip()
         brand = str(product.get("Бренд") or product.get("brand") or "").strip()
         model = str(product.get("Модель") or product.get("model") or "").strip()
+        price = str(product.get("Ціна") or product.get("price") or "").strip()
         status = str(product.get("Статус") or product.get("status") or "draft").strip()
         publish_status = str(product.get("publish_status") or "").strip()
 
         if not article:
             continue
 
-        suffix = f" | {publish_status}" if publish_status else ""
-        title = f"{article} | {brand} {model} | {status}{suffix}"
+        status_text = publish_status or status
+        title = f"{article} | {brand} {model} | {price} грн | {status_text}"
         keyboard.add(InlineKeyboardButton(text=title[:64], callback_data=f"preview_publish_{article}"))
 
-    keyboard.add(InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel_publish"))
+    nav_buttons = []
+
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"publish_filter_{filter_name}_{page - 1}"))
+
+    nav_buttons.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="ignore"))
+
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="➡️ Далі", callback_data=f"publish_filter_{filter_name}_{page + 1}"))
+
+    keyboard.row(*nav_buttons)
+    keyboard.row(InlineKeyboardButton(text="🔎 Пошук", callback_data="publish_search"))
+    keyboard.row(InlineKeyboardButton(text="⬅️ Фільтри", callback_data="publish_filters"))
+    keyboard.row(InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel_publish"))
+
+    return keyboard
+
+
+def get_publish_search_results_keyboard(products):
+    keyboard = InlineKeyboardMarkup(row_width=1)
+
+    for product in products[:20]:
+        article = str(product.get("Артикул") or product.get("article") or "").strip()
+        brand = str(product.get("Бренд") or product.get("brand") or "").strip()
+        model = str(product.get("Модель") or product.get("model") or "").strip()
+        price = str(product.get("Ціна") or product.get("price") or "").strip()
+        status = str(product.get("publish_status") or product.get("Статус") or product.get("status") or "").strip()
+
+        if not article:
+            continue
+
+        title = f"{article} | {brand} {model} | {price} грн | {status}"
+        keyboard.add(InlineKeyboardButton(text=title[:64], callback_data=f"preview_publish_{article}"))
+
+    keyboard.row(InlineKeyboardButton(text="🔎 Новий пошук", callback_data="publish_search"))
+    keyboard.row(InlineKeyboardButton(text="⬅️ Фільтри", callback_data="publish_filters"))
+    keyboard.row(InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel_publish"))
     return keyboard
 
 
@@ -162,7 +211,7 @@ def get_publish_preview_keyboard(article):
     keyboard.row(InlineKeyboardButton(text="✏️ Змінити", callback_data=f"edit_product_{article}"))
     keyboard.row(InlineKeyboardButton(text="📤 Опублікувати в групу", callback_data=f"publish_{article}"))
     keyboard.row(InlineKeyboardButton(text="🕒 Запланувати пост", callback_data=f"schedule_product_{article}"))
-    keyboard.row(InlineKeyboardButton(text="⬅️ Назад до списку", callback_data="back_to_publish_list"))
+    keyboard.row(InlineKeyboardButton(text="⬅️ Назад до списку", callback_data="publish_filters"))
     keyboard.row(InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel_publish"))
     return keyboard
 
