@@ -274,6 +274,22 @@ def _paginate(items, page, page_size=PUBLISH_PAGE_SIZE):
     return items[start:end], page, total_pages, total
 
 
+def _product_order_link(bot_username, article):
+    payload = quote(f"buy_{article}")
+    return f"https://t.me/{bot_username}?start={payload}"
+
+
+def _product_caption_with_order_link(product, bot_username):
+    article = _get_article(product)
+    order_link = _product_order_link(bot_username, article)
+
+    return (
+        f"{_product_caption(product)}\n\n"
+        f"Для оформлення натискай сюди 👇\n"
+        f'<a href="{order_link}"><b>🛒 ОФОРМИТИ ЗАМОВЛЕННЯ</b></a>'
+    )
+
+
 async def _send_publish_page(answer_method, products, filter_name="all", page=0):
     filtered = _filter_products_for_publish(products, filter_name)
     page_items, page, total_pages, total = _paginate(filtered, page)
@@ -1150,7 +1166,8 @@ async def publish_selected_product(callback_query: types.CallbackQuery, bot):
 
     photo_ids = _parse_photo_ids(product.get("Фото") or product.get("photo_ids") or "")
 
-    caption = _product_caption(product)
+    me = await bot.get_me()
+    caption = _product_caption_with_order_link(product, me.username)
 
     if len(photo_ids) <= 1:
         sent_message = await bot.send_photo(
@@ -1167,26 +1184,18 @@ async def publish_selected_product(callback_query: types.CallbackQuery, bot):
             else:
                 media.append(InputMediaPhoto(media=photo_id))
 
-        album_messages = await bot.send_media_group(chat_id=SHOP_GROUP_ID, media=media)
+        album_messages = await bot.send_media_group(
+            chat_id=SHOP_GROUP_ID,
+            media=media,
+        )
         sent_message = album_messages[0]
-
-    me = await bot.get_me()
-    deep_link = f"https://t.me/{me.username}?start={quote(f'buy_{article}_post{sent_message.message_id}')}"
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(types.InlineKeyboardButton(text="🛒 Оформити замовлення", url=deep_link))
-
-    button_message = await bot.send_message(
-        SHOP_GROUP_ID,
-        text="Оформити замовлення 👇",
-        reply_markup=markup,
-    )
 
     await db.create_post_log(
         {
             "product_id": _get_product_id(product),
             "article": article,
             "chat_id": SHOP_GROUP_ID,
-            "message_id": button_message.message_id,
+            "message_id": sent_message.message_id,
             "status": "published",
         }
     )
@@ -1201,6 +1210,6 @@ async def publish_selected_product(callback_query: types.CallbackQuery, bot):
     )
 
     await callback_query.message.answer(
-        f"✅ Товар {article} опубліковано в магазині.",
+        f"✅ Товар {article} опубліковано одним постом.",
         reply_markup=_main_menu_for(callback_query.from_user.id),
     )
