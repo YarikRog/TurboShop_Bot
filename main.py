@@ -332,6 +332,30 @@ async def admin_publish_selected_h(c: types.CallbackQuery):
     await cache.update()
 
 
+# =========================
+# ORDER UX HANDLERS
+# =========================
+
+@dp.message_handler(lambda m: m.text == "✅ Підтвердити замовлення", state=order.OrderState.confirmation)
+async def confirm_order_h(m: types.Message, state: FSMContext):
+    await order.confirm_order(m, state, bot)
+
+
+@dp.message_handler(lambda m: m.text == "✏️ Змінити телефон", state=order.OrderState.confirmation)
+async def edit_order_phone_h(m: types.Message, state: FSMContext):
+    await order.edit_order_phone(m, state)
+
+
+@dp.message_handler(lambda m: m.text == "✏️ Змінити ім’я", state=order.OrderState.confirmation)
+async def edit_order_fio_h(m: types.Message, state: FSMContext):
+    await order.edit_order_fio(m, state)
+
+
+@dp.message_handler(lambda m: m.text == "✏️ Змінити доставку", state=order.OrderState.confirmation)
+async def edit_order_delivery_h(m: types.Message, state: FSMContext):
+    await order.edit_order_delivery(m, state)
+
+
 @dp.message_handler(content_types=["contact", "text"], state=order.OrderState.waiting_for_phone)
 async def phone_h(m: types.Message, state: FSMContext):
     await order.get_phone(m, state)
@@ -346,6 +370,10 @@ async def fio_h(m: types.Message, state: FSMContext):
 async def deliv_h(m: types.Message, state: FSMContext):
     await order.get_delivery(m, state, bot)
 
+
+# =========================
+# ADMIN ADD PRODUCT FSM
+# =========================
 
 @dp.message_handler(state=admin.AddProductState.waiting_for_article)
 async def admin_article_h(m: types.Message, state: FSMContext):
@@ -402,6 +430,10 @@ async def admin_stock_h(m: types.Message, state: FSMContext):
     await admin.save_stock(m, state)
 
 
+# =========================
+# ADMIN EDIT DRAFT FSM
+# =========================
+
 @dp.message_handler(content_types=["photo"], state=admin.EditDraftState.waiting_for_photos)
 async def admin_edit_draft_photo_h(m: types.Message, state: FSMContext):
     await admin.collect_photo(m, state)
@@ -416,6 +448,10 @@ async def admin_edit_draft_finish_photos_h(m: types.Message, state: FSMContext):
 async def admin_edit_draft_value_h(m: types.Message, state: FSMContext):
     await admin.save_draft_edited_field(m, state)
 
+
+# =========================
+# ADMIN EDIT SAVED FSM
+# =========================
 
 @dp.message_handler(content_types=["photo"], state=admin.EditSavedState.waiting_for_photos)
 async def admin_edit_saved_photo_h(m: types.Message, state: FSMContext):
