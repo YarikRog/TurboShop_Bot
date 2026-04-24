@@ -8,6 +8,7 @@ def main_menu(is_admin=False):
     keyboard.row(KeyboardButton("🛒 Кошик"), KeyboardButton("💬 Менеджер"))
     if is_admin:
         keyboard.row(KeyboardButton("➕ Додати товар"), KeyboardButton("📤 Опублікувати товар"))
+        keyboard.row(KeyboardButton("📅 Розпланувати всі пости"))
     return keyboard
 
 
@@ -88,6 +89,7 @@ def get_after_order_keyboard(manager_username=None, is_admin=False):
 
     if is_admin:
         keyboard.row(KeyboardButton("➕ Додати товар"), KeyboardButton("📤 Опублікувати товар"))
+        keyboard.row(KeyboardButton("📅 Розпланувати всі пости"))
 
     return keyboard
 
@@ -156,7 +158,29 @@ def get_publish_preview_keyboard(article):
     keyboard = InlineKeyboardMarkup(row_width=1)
     keyboard.row(InlineKeyboardButton(text="✏️ Змінити", callback_data=f"edit_product_{article}"))
     keyboard.row(InlineKeyboardButton(text="📤 Опублікувати в групу", callback_data=f"publish_{article}"))
+    keyboard.row(InlineKeyboardButton(text="🕒 Запланувати пост", callback_data=f"schedule_product_{article}"))
     keyboard.row(InlineKeyboardButton(text="⬅️ Назад до списку", callback_data="back_to_publish_list"))
+    keyboard.row(InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel_publish"))
+    return keyboard
+
+
+def get_schedule_product_keyboard(article):
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.row(
+        InlineKeyboardButton(text="Сьогодні 09:00", callback_data=f"schedule_one_{article}_today_09"),
+        InlineKeyboardButton(text="Сьогодні 15:00", callback_data=f"schedule_one_{article}_today_15"),
+    )
+    keyboard.row(
+        InlineKeyboardButton(text="Сьогодні 20:00", callback_data=f"schedule_one_{article}_today_20"),
+    )
+    keyboard.row(
+        InlineKeyboardButton(text="Завтра 09:00", callback_data=f"schedule_one_{article}_tomorrow_09"),
+        InlineKeyboardButton(text="Завтра 15:00", callback_data=f"schedule_one_{article}_tomorrow_15"),
+    )
+    keyboard.row(
+        InlineKeyboardButton(text="Завтра 20:00", callback_data=f"schedule_one_{article}_tomorrow_20"),
+    )
+    keyboard.row(InlineKeyboardButton(text="⬅️ Назад до прев’ю", callback_data=f"preview_publish_{article}"))
     keyboard.row(InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel_publish"))
     return keyboard
 
