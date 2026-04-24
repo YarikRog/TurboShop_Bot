@@ -319,8 +319,22 @@ async def admin_cancel_cb_h(c: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query_handler(lambda c: c.data == "back_to_publish_list", state="*")
 async def admin_publish_back_h(c: types.CallbackQuery):
-    await admin.send_publish_list(c.message.answer, c.from_user.id)
-    await c.answer()
+    await admin.show_publish_filters(c)
+
+
+@dp.callback_query_handler(lambda c: c.data == "publish_filters", state="*")
+async def admin_publish_filters_h(c: types.CallbackQuery):
+    await admin.show_publish_filters(c)
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("publish_filter_"), state="*")
+async def admin_publish_filter_page_h(c: types.CallbackQuery):
+    await admin.send_publish_filtered_page(c)
+
+
+@dp.callback_query_handler(lambda c: c.data == "publish_search", state="*")
+async def admin_publish_search_h(c: types.CallbackQuery, state: FSMContext):
+    await admin.start_publish_search(c, state)
 
 
 @dp.callback_query_handler(lambda c: c.data.startswith("preview_publish_"), state="*")
@@ -451,6 +465,15 @@ async def admin_finish_photos_h(m: types.Message, state: FSMContext):
 @dp.message_handler(state=admin.AddProductState.waiting_for_stock)
 async def admin_stock_h(m: types.Message, state: FSMContext):
     await admin.save_stock(m, state)
+
+
+# =========================
+# ADMIN PUBLISH SEARCH FSM
+# =========================
+
+@dp.message_handler(state=admin.PublishSearchState.waiting_for_query)
+async def admin_publish_search_query_h(m: types.Message, state: FSMContext):
+    await admin.handle_publish_search_query(m, state)
 
 
 # =========================
