@@ -1,7 +1,9 @@
 import os
 import asyncio
 import logging
+from datetime import datetime, timedelta, time
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 from aiogram import types
 from aiogram.dispatcher import FSMContext
@@ -15,6 +17,8 @@ logger = logging.getLogger("TurboBot.Admin")
 
 ADMIN_IDS = {int(item.strip()) for item in os.getenv("ADMIN_IDS", "").split(",") if item.strip().isdigit()}
 SHOP_GROUP_ID = os.getenv("SHOP_GROUP_ID")
+KYIV_TZ = ZoneInfo("Europe/Kyiv")
+SLOT_HOURS = (9, 15, 20)
 
 MEDIA_GROUP_BUFFER = {}
 MEDIA_GROUP_TASKS = {}
@@ -59,6 +63,63 @@ def _get_status(product):
     if not isinstance(product, dict):
         return "draft"
     return str(product.get("Статус") or product.get("status") or "draft").strip()
+
+
+def _get_publish_status(product):
+    if not isinstance(product, dict):
+        return ""
+    return str(product.get("publish_status") or "").strip()
+
+
+def _format_publish_at(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def _build_schedule_datetime(day: str, hour: str):
+    now = datetime.now(KYIV_TZ)
+    target_date = now.date() if day == "today" else (now + timedelta(days=1)).date()
+    target_dt = datetime.combine(target_date, time(hour=int(hour), minute=0), KYIV_TZ)
+    rolled_to_tomorrow = False
+
+    if target_dt <= now:
+        target_dt = target_dt + timedelta(days=1)
+        rolled_to_tomorrow = True
+
+    return target_dt, rolled_to_tomorrow
+
+
+def _next_future_slots(limit: int):
+    now = datetime.now(KYIV_TZ)
+    slots = []
+    cursor_date = now.date()
+
+    while len(slots) < limit:
+        for hour in SLOT_HOURS:
+            candidate = datetime.combine(cursor_date, time(hour=hour, minute=0), KYIV_TZ)
+            if candidate > now:
+                slots.append(candidate)
+                if len(slots) >= limit:
+                    break
+        cursor_date = cursor_date + timedelta(days=1)
+
+    return slots
+
+
+def _is_schedulable_product(product):
+    article = _get_article(product)
+    status = _get_status(product).lower()
+    publish_status = _get_publish_status(product).lower()
+
+    if not article:
+        return False
+
+    if status in {"hidden", "sold_out"}:
+        return False
+
+    if publish_status in {"queued", "published"}:
+        return False
+
+    return True
 
 
 def _product_exists(product, article):
@@ -603,6 +664,51 @@ async def start_publish_product(message: types.Message):
     await send_publish_list(message.answer, message.from_user.id)
 
 
+async def schedule_all_posts(message: types.Message):
+    if not is_admin(message.from_user.id):
+        return await message.answer("У вас немає доступу до цієї дії.")
+
+    products = await db.get_products()
+    schedulable = [product for product in products if _is_schedulable_product(product)]
+    schedulable.sort(key=lambda product: _get_article(product), reverse=True)
+
+    selected = schedulable[:30]
+
+    if not selected:
+        return await message.answer("Немає товарів для планування.")
+
+    slots = _next_future_slots(len(selected))
+    scheduled_lines = []
+
+    for product, slot in zip(selected, slots):
+        article = _get_article(product)
+        publish_at = _format_publish_at(slot)
+
+        result = await db.update_product_fields(
+            article,
+            {
+                "publish_status": "queued",
+                "publish_at": publish_at,
+                "published_at": "",
+            }
+        )
+
+        if result is None:
+            logger.warning("Failed to schedule article %s", article)
+            continue
+
+        scheduled_lines.append(f"{article} → {publish_at}")
+
+    if not scheduled_lines:
+        return await message.answer("❌ Не вдалося розпланувати товари. Перевір GAS.")
+
+    summary = "\n".join(scheduled_lines)
+    await message.answer(
+        f"✅ Розплановано: {len(scheduled_lines)} товарів\n\n{summary}",
+        reply_markup=_main_menu_for(message.from_user.id),
+    )
+
+
 async def send_publish_list(answer_method, user_id):
     if not is_admin(user_id):
         return await answer_method("У вас немає доступу до цієї дії.")
@@ -681,6 +787,69 @@ async def preview_publish_product(callback_query: types.CallbackQuery, bot):
         )
 
     await send_publish_preview(callback_query.message.chat.id, product, bot)
+
+
+async def start_schedule_product(callback_query: types.CallbackQuery, bot):
+    if not is_admin(callback_query.from_user.id):
+        return await callback_query.answer("Немає доступу.", show_alert=True)
+
+    await callback_query.answer()
+
+    article = callback_query.data.replace("schedule_product_", "", 1).strip()
+    product = await db.get_product_by_article(article)
+
+    if not product:
+        return await callback_query.message.answer("❌ Товар не знайдено.")
+
+    await callback_query.message.answer(
+        f"Оберіть час публікації для товару {article}:",
+        reply_markup=kb.get_schedule_product_keyboard(article),
+    )
+
+
+async def schedule_one_product(callback_query: types.CallbackQuery):
+    if not is_admin(callback_query.from_user.id):
+        return await callback_query.answer("Немає доступу.", show_alert=True)
+
+    raw = callback_query.data.replace("schedule_one_", "", 1).strip()
+
+    try:
+        article, day, hour = raw.rsplit("_", 2)
+    except ValueError:
+        return await callback_query.answer("Некоректні дані планування.", show_alert=True)
+
+    if day not in {"today", "tomorrow"} or hour not in {"09", "15", "20"}:
+        return await callback_query.answer("Некоректний час планування.", show_alert=True)
+
+    product = await db.get_product_by_article(article)
+    if not product:
+        return await callback_query.message.answer("❌ Товар не знайдено.")
+
+    publish_dt, moved_to_tomorrow = _build_schedule_datetime(day, hour)
+    publish_at = _format_publish_at(publish_dt)
+
+    result = await db.update_product_fields(
+        article,
+        {
+            "publish_status": "queued",
+            "publish_at": publish_at,
+            "published_at": "",
+        }
+    )
+
+    if result is None:
+        return await callback_query.message.answer("❌ Не вдалося записати розклад у таблицю. Перевір GAS.")
+
+    await callback_query.answer("Заплановано.")
+
+    extra_note = ""
+    if moved_to_tomorrow and day == "today":
+        extra_note = "\nℹ️ Обраний час на сьогодні вже минув, тому пост автоматично перенесено на завтра."
+
+    await callback_query.message.answer(
+        f"✅ Товар {article} заплановано на {publish_at}{extra_note}",
+        reply_markup=_main_menu_for(callback_query.from_user.id),
+    )
 
 
 async def start_edit_saved_product(callback_query: types.CallbackQuery, bot):
