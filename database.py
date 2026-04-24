@@ -11,7 +11,16 @@ HTTP_TIMEOUT = aiohttp.ClientTimeout(total=15)
 
 
 def _is_successful_response(data: Any) -> bool:
-    return data is not None and (not isinstance(data, dict) or data.get("ok", True) is not False)
+    if data is None:
+        return False
+
+    if isinstance(data, dict):
+        if data.get("ok") is False:
+            return False
+        if data.get("success") is False:
+            return False
+
+    return True
 
 
 def _normalize_product(item: dict[str, Any]) -> dict[str, Any]:
@@ -44,6 +53,7 @@ def _normalize_product(item: dict[str, Any]) -> dict[str, Any]:
             "photo_ids": photo_ids,
             "status": status,
             "stock": stock,
+
             "Артикул": article,
             "Бренд": brand,
             "Модель": model,
@@ -62,6 +72,9 @@ def _normalize_product(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _extract_products(data: Any) -> list[dict[str, Any]]:
+    if not _is_successful_response(data):
+        return []
+
     if isinstance(data, list):
         return [_normalize_product(item) for item in data if isinstance(item, dict)]
 
@@ -70,16 +83,22 @@ def _extract_products(data: Any) -> list[dict[str, Any]]:
             value = data.get(key)
             if isinstance(value, list):
                 return [_normalize_product(item) for item in value if isinstance(item, dict)]
+
         item = data.get("item")
         if isinstance(item, dict):
             return [_normalize_product(item)]
+
         if data.get("article") or data.get("Артикул"):
             return [_normalize_product(data)]
 
     return []
 
 
-async def _request_json(method: str, params: dict[str, Any] | None = None, payload: dict[str, Any] | None = None):
+async def _request_json(
+    method: str,
+    params: dict[str, Any] | None = None,
+    payload: dict[str, Any] | None = None,
+):
     if not GAS_URL:
         logger.error("GAS_URL is not defined in environment variables")
         return None
@@ -87,22 +106,23 @@ async def _request_json(method: str, params: dict[str, Any] | None = None, paylo
     try:
         async with aiohttp.ClientSession(timeout=HTTP_TIMEOUT) as session:
             async with session.request(method, GAS_URL, params=params, json=payload) as response:
+                text = await response.text()
+
                 if response.status != 200:
-                    body = await response.text()
-                    logger.error("GAS request failed: %s %s", response.status, body[:300])
+                    logger.error("GAS request failed: %s %s", response.status, text[:500])
                     return None
 
-                content_type = response.headers.get("Content-Type", "")
-                if "application/json" in content_type.lower():
-                    return await response.json()
+                try:
+                    return await response.json(content_type=None)
+                except Exception:
+                    logger.warning("GAS returned non-JSON response: %s", text[:500])
+                    return {"ok": True, "raw": text}
 
-                text = await response.text()
-                logger.warning("GAS returned non-JSON response: %s", text[:300])
-                return {"ok": True, "raw": text}
     except asyncio.TimeoutError:
         logger.error("GAS request timed out after %ss", HTTP_TIMEOUT.total)
     except Exception as exc:
         logger.error("Critical GAS request error: %s", exc, exc_info=True)
+
     return None
 
 
@@ -116,33 +136,57 @@ async def get_all_items():
 
 
 async def get_product_by_article(article: str):
-    article = str(article).strip()
+    article = str(article or "").strip()
     if not article:
         return None
 
-    data = await _request_json("POST", payload={"action": "get_product_by_article", "article": article})
+    data = await _request_json(
+        "POST",
+        payload={
+            "action": "get_product_by_article",
+            "article": article,
+        },
+    )
+
+    if not _is_successful_response(data):
+        logger.info("Product not found or GAS returned error for article %s: %s", article, data)
+        return None
+
     products = _extract_products(data)
+
     if products:
-        return products[0]
+        exact = next(
+            (item for item in products if str(item.get("Артикул", "")).strip() == article),
+            None,
+        )
+        return exact or products[0]
 
     all_products = await get_products()
-    return next((item for item in all_products if str(item.get("Артикул", "")).strip() == article), None)
+
+    return next(
+        (item for item in all_products if str(item.get("Артикул", "")).strip() == article),
+        None,
+    )
 
 
 async def create_product(payload: dict[str, Any]):
     request_payload = {**payload, "action": "create_product"}
     data = await _request_json("POST", payload=request_payload)
+
     if not _is_successful_response(data):
         logger.error("create_product failed: %s", data)
         return None
+
     return data
 
 
 async def create_order(payload: dict[str, Any]):
     request_payload = {**payload, "action": "create_order"}
     data = await _request_json("POST", payload=request_payload)
+
     if _is_successful_response(data):
         return data
+
     logger.warning("Structured create_order failed, trying legacy payload: %s", data)
 
     legacy_payload = {
@@ -156,37 +200,68 @@ async def create_order(payload: dict[str, Any]):
         "user": payload.get("telegram_username", ""),
         "source": payload.get("source", "direct"),
     }
+
     data = await _request_json("POST", payload=legacy_payload)
+
     if not _is_successful_response(data):
         logger.error("Legacy create_order failed: %s", data)
         return None
+
     return data
 
 
 async def register_user(payload: dict[str, Any]):
     request_payload = {**payload, "action": "register_user"}
     data = await _request_json("POST", payload=request_payload)
+
     if not _is_successful_response(data):
         logger.error("register_user failed: %s", data)
         return None
+
     return data
 
 
 async def create_post_log(payload: dict[str, Any]):
     request_payload = {**payload, "action": "create_post_log"}
     data = await _request_json("POST", payload=request_payload)
+
     if not _is_successful_response(data):
         logger.error("create_post_log failed: %s", data)
         return None
+
     return data
 
 
 async def update_product_status(article: str, status: str):
-    payload = {"action": "update_product_status", "article": article, "status": status}
+    payload = {
+        "action": "update_product_status",
+        "article": str(article).strip(),
+        "status": str(status).strip(),
+    }
+
     data = await _request_json("POST", payload=payload)
+
     if not _is_successful_response(data):
         logger.warning("update_product_status failed: %s", data)
         return None
+
+    return data
+
+
+async def update_product_field(article: str, field: str, value: Any):
+    payload = {
+        "action": "update_product_field",
+        "article": str(article).strip(),
+        "field": str(field).strip(),
+        "value": value,
+    }
+
+    data = await _request_json("POST", payload=payload)
+
+    if not _is_successful_response(data):
+        logger.error("update_product_field failed: %s", data)
+        return None
+
     return data
 
 
@@ -212,7 +287,11 @@ def get_available_sizes(all_products, category, brand_name):
     try:
         return sorted(
             list(sizes),
-            key=lambda value: float(value.replace(",", ".")) if value.replace(",", "", 1).replace(".", "", 1).isdigit() else value,
+            key=lambda value: (
+                float(value.replace(",", "."))
+                if value.replace(",", "", 1).replace(".", "", 1).isdigit()
+                else value
+            ),
         )
     except Exception:
         return sorted(list(sizes))
