@@ -6,6 +6,7 @@ from urllib.parse import quote
 from aiogram import types
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.types import InputMediaPhoto
 
 import database as db
 import keyboards as kb
@@ -149,6 +150,46 @@ def _saved_edit_menu_text(product):
     )
 
 
+async def _send_album_or_photo(bot, chat_id, photos, caption, reply_markup=None):
+    photos = list(dict.fromkeys([str(photo).strip() for photo in photos if str(photo).strip()]))
+
+    if not photos:
+        return await bot.send_photo(
+            chat_id,
+            photo="https://via.placeholder.com/500",
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=reply_markup,
+        )
+
+    if len(photos) == 1:
+        return await bot.send_photo(
+            chat_id,
+            photo=photos[0],
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=reply_markup,
+        )
+
+    media = []
+    for index, photo in enumerate(photos[:10]):
+        if index == 0:
+            media.append(InputMediaPhoto(media=photo, caption=caption, parse_mode="HTML"))
+        else:
+            media.append(InputMediaPhoto(media=photo))
+
+    messages = await bot.send_media_group(chat_id=chat_id, media=media)
+
+    if reply_markup:
+        await bot.send_message(
+            chat_id,
+            text="👇 Дія з товаром:",
+            reply_markup=reply_markup,
+        )
+
+    return messages[0] if messages else None
+
+
 async def _send_draft_preview(message_or_callback_message, state: FSMContext):
     data = await state.get_data()
     photo_ids = data.get("photo_ids", [])
@@ -158,11 +199,12 @@ async def _send_draft_preview(message_or_callback_message, state: FSMContext):
 
     await AddProductState.confirmation.set()
 
-    await message_or_callback_message.answer_photo(
-        photo_ids[0],
-        caption=_draft_preview_text(data),
+    await _send_album_or_photo(
+        message_or_callback_message.bot,
+        message_or_callback_message.chat.id,
+        photo_ids,
+        _draft_preview_text(data),
         reply_markup=kb.get_save_or_publish_keyboard(),
-        parse_mode="HTML",
     )
 
 
@@ -607,13 +649,12 @@ async def send_publish_preview(chat_id, product, bot):
     )
 
     photos = _parse_photo_ids(product.get("Фото") or product.get("photo_ids") or "")
-    preview_photo = photos[0] if photos else "https://via.placeholder.com/500"
 
-    await bot.send_photo(
+    await _send_album_or_photo(
+        bot,
         chat_id,
-        photo=preview_photo,
-        caption=caption,
-        parse_mode="HTML",
+        photos,
+        caption,
         reply_markup=kb.get_publish_preview_keyboard(article),
     )
 
@@ -759,21 +800,34 @@ async def publish_selected_product(callback_query: types.CallbackQuery, bot):
 
     photo_ids = _parse_photo_ids(product.get("Фото") or product.get("photo_ids") or "")
 
-    sent_message = await bot.send_photo(
-        SHOP_GROUP_ID,
-        photo=photo_ids[0] if photo_ids else "https://via.placeholder.com/500",
-        caption=_product_caption(product),
-        parse_mode="HTML",
-    )
+    caption = _product_caption(product)
+
+    if len(photo_ids) <= 1:
+        sent_message = await bot.send_photo(
+            SHOP_GROUP_ID,
+            photo=photo_ids[0] if photo_ids else "https://via.placeholder.com/500",
+            caption=caption,
+            parse_mode="HTML",
+        )
+    else:
+        media = []
+        for index, photo_id in enumerate(photo_ids[:10]):
+            if index == 0:
+                media.append(InputMediaPhoto(media=photo_id, caption=caption, parse_mode="HTML"))
+            else:
+                media.append(InputMediaPhoto(media=photo_id))
+
+        album_messages = await bot.send_media_group(chat_id=SHOP_GROUP_ID, media=media)
+        sent_message = album_messages[0]
 
     me = await bot.get_me()
     deep_link = f"https://t.me/{me.username}?start={quote(f'buy_{article}_post{sent_message.message_id}')}"
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(types.InlineKeyboardButton(text="Купити", url=deep_link))
 
-    await bot.edit_message_reply_markup(
-        chat_id=SHOP_GROUP_ID,
-        message_id=sent_message.message_id,
+    button_message = await bot.send_message(
+        SHOP_GROUP_ID,
+        text="👇 Натискай, щоб оформити замовлення:",
         reply_markup=markup,
     )
 
@@ -782,7 +836,7 @@ async def publish_selected_product(callback_query: types.CallbackQuery, bot):
             "product_id": _get_product_id(product),
             "article": article,
             "chat_id": SHOP_GROUP_ID,
-            "message_id": sent_message.message_id,
+            "message_id": button_message.message_id,
             "status": "published",
         }
     )
