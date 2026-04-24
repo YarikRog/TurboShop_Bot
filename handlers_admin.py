@@ -154,8 +154,7 @@ def _product_caption(product):
         f"💰 Ціна: <b>{product.get('Ціна') or product.get('price')} грн</b>\n"
         f"📏 Розміри: <b>{sizes}</b>\n"
         f"🆔 Артикул: <code>{article}</code>\n\n"
-        f"{short_description}\n\n"
-        "Натискайте кнопку нижче, щоб перейти до замовлення."
+        f"{short_description}"
     )
 
 
@@ -211,7 +210,7 @@ def _saved_edit_menu_text(product):
     )
 
 
-async def _send_album_or_photo(bot, chat_id, photos, caption, reply_markup=None):
+async def _send_album_or_photo(bot, chat_id, photos, caption, reply_markup=None, action_text="Оформити замовлення 👇"):
     photos = list(dict.fromkeys([str(photo).strip() for photo in photos if str(photo).strip()]))
 
     if not photos:
@@ -244,7 +243,7 @@ async def _send_album_or_photo(bot, chat_id, photos, caption, reply_markup=None)
     if reply_markup:
         await bot.send_message(
             chat_id,
-            text="👇 Дія з товаром:",
+            text=action_text,
             reply_markup=reply_markup,
         )
 
@@ -266,6 +265,7 @@ async def _send_draft_preview(message_or_callback_message, state: FSMContext):
         photo_ids,
         _draft_preview_text(data),
         reply_markup=kb.get_save_or_publish_keyboard(),
+        action_text="Дія з товаром 👇",
     )
 
 
@@ -748,11 +748,17 @@ async def send_publish_preview(chat_id, product, bot):
         return await bot.send_message(chat_id, "Товар не знайдено.")
 
     article = _get_article(product)
+    publish_status = _get_publish_status(product)
+    publish_at = str(product.get("publish_at") or "").strip()
+
     caption = (
         f"Прев'ю перед публікацією:\n\n"
         f"{_product_caption(product)}\n\n"
         f"Статус: <b>{_get_status(product)}</b>"
     )
+
+    if publish_status or publish_at:
+        caption += f"\nПланування: <b>{publish_status or '—'}</b> {publish_at or ''}"
 
     photos = _parse_photo_ids(product.get("Фото") or product.get("photo_ids") or "")
 
@@ -762,6 +768,7 @@ async def send_publish_preview(chat_id, product, bot):
         photos,
         caption,
         reply_markup=kb.get_publish_preview_keyboard(article),
+        action_text="Дія з товаром 👇",
     )
 
 
@@ -992,11 +999,11 @@ async def publish_selected_product(callback_query: types.CallbackQuery, bot):
     me = await bot.get_me()
     deep_link = f"https://t.me/{me.username}?start={quote(f'buy_{article}_post{sent_message.message_id}')}"
     markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(types.InlineKeyboardButton(text="Купити", url=deep_link))
+    markup.add(types.InlineKeyboardButton(text="🛒 Оформити замовлення", url=deep_link))
 
     button_message = await bot.send_message(
         SHOP_GROUP_ID,
-        text="👇 Натискай, щоб оформити замовлення:",
+        text="Оформити замовлення 👇",
         reply_markup=markup,
     )
 
@@ -1011,6 +1018,13 @@ async def publish_selected_product(callback_query: types.CallbackQuery, bot):
     )
 
     await db.update_product_status(article, "published")
+    await db.update_product_fields(
+        article,
+        {
+            "publish_status": "published",
+            "published_at": _format_publish_at(datetime.now(KYIV_TZ)),
+        }
+    )
 
     await callback_query.message.answer(
         f"✅ Товар {article} опубліковано в магазині.",
