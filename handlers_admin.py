@@ -19,6 +19,20 @@ MEDIA_GROUP_BUFFER = {}
 MEDIA_GROUP_TASKS = {}
 MEDIA_GROUP_LOCK = asyncio.Lock()
 
+FIELD_LABELS = {
+    "article": "Артикул",
+    "brand": "Бренд",
+    "model": "Модель",
+    "category": "Категорія",
+    "season": "Сезон",
+    "price": "Ціна",
+    "sizes": "Розміри",
+    "description": "Опис",
+    "photo_ids": "Фото",
+    "stock": "Залишок",
+    "status": "Статус",
+}
+
 
 def is_admin(user_id):
     return int(user_id) in ADMIN_IDS
@@ -57,6 +71,14 @@ def _product_exists(product, article):
     return bool(product_article and product_article == str(article).strip())
 
 
+def _parse_photo_ids(raw_photos):
+    raw = str(raw_photos or "")
+    for delimiter in (";", "\n", "\r"):
+        raw = raw.replace(delimiter, ",")
+    photos = [photo.strip() for photo in raw.split(",") if photo.strip() and photo.strip().lower() != "none"]
+    return list(dict.fromkeys(photos))
+
+
 def _product_caption(product):
     article = _get_article(product)
     description = str(product.get("Опис") or product.get("description") or "").strip()
@@ -75,12 +97,95 @@ def _product_caption(product):
     )
 
 
-def _parse_photo_ids(raw_photos):
-    raw = str(raw_photos or "")
-    for delimiter in (";", "\n", "\r"):
-        raw = raw.replace(delimiter, ",")
-    photos = [photo.strip() for photo in raw.split(",") if photo.strip() and photo.strip().lower() != "none"]
-    return list(dict.fromkeys(photos))
+def _draft_preview_text(data):
+    return (
+        f"Перевірте дані товару:\n\n"
+        f"Артикул: {data.get('article', '—')}\n"
+        f"Бренд: {data.get('brand', '—')}\n"
+        f"Модель: {data.get('model', '—')}\n"
+        f"Категорія: {data.get('category', '—')}\n"
+        f"Сезон: {data.get('season', '—')}\n"
+        f"Ціна: {data.get('price', '—')} грн\n"
+        f"Розміри: {data.get('sizes', '—')}\n"
+        f"Опис: {data.get('description', '—')}\n"
+        f"Фото: {len(data.get('photo_ids', []))} шт.\n"
+        f"Залишок: {data.get('stock', '—')}"
+    )
+
+
+def _draft_edit_menu_text(data):
+    return (
+        f"Що змінити?\n\n"
+        f"Артикул: <code>{data.get('article', '—')}</code>\n"
+        f"Бренд: <b>{data.get('brand', '—')}</b>\n"
+        f"Модель: <b>{data.get('model', '—')}</b>\n"
+        f"Категорія: <b>{data.get('category', '—')}</b>\n"
+        f"Сезон: <b>{data.get('season', '—')}</b>\n"
+        f"Ціна: <b>{data.get('price', '—')}</b>\n"
+        f"Розміри: <b>{data.get('sizes', '—')}</b>\n"
+        f"Опис: <i>{data.get('description', '—')}</i>\n"
+        f"Фото: <b>{len(data.get('photo_ids', []))} шт.</b>\n"
+        f"Залишок: <b>{data.get('stock', '—')}</b>\n\n"
+        f"Натисни поле, яке треба змінити."
+    )
+
+
+def _saved_edit_menu_text(product):
+    photos = _parse_photo_ids(product.get("Фото") or product.get("photo_ids") or "")
+    return (
+        f"Що змінити?\n\n"
+        f"Артикул: <code>{_get_article(product)}</code>\n"
+        f"Бренд: <b>{product.get('Бренд') or product.get('brand') or '—'}</b>\n"
+        f"Модель: <b>{product.get('Модель') or product.get('model') or '—'}</b>\n"
+        f"Категорія: <b>{product.get('Категорія') or product.get('category') or '—'}</b>\n"
+        f"Сезон: <b>{product.get('Сезон') or product.get('season') or '—'}</b>\n"
+        f"Ціна: <b>{product.get('Ціна') or product.get('price') or '—'}</b>\n"
+        f"Розміри: <b>{product.get('Розміри') or product.get('sizes') or '—'}</b>\n"
+        f"Опис: <i>{product.get('Опис') or product.get('description') or '—'}</i>\n"
+        f"Фото: <b>{len(photos)} шт.</b>\n"
+        f"Залишок: <b>{product.get('Залишок') or product.get('stock') or '—'}</b>\n"
+        f"Статус: <b>{_get_status(product)}</b>\n\n"
+        f"Натисни поле, яке треба змінити."
+    )
+
+
+async def _send_draft_preview(message_or_callback_message, state: FSMContext):
+    data = await state.get_data()
+    photo_ids = data.get("photo_ids", [])
+
+    if not photo_ids:
+        return await message_or_callback_message.answer("Спочатку додайте хоча б одне фото.")
+
+    await AddProductState.confirmation.set()
+
+    await message_or_callback_message.answer_photo(
+        photo_ids[0],
+        caption=_draft_preview_text(data),
+        reply_markup=kb.get_save_or_publish_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+def _validate_draft_value(field, value):
+    value = str(value or "").strip()
+
+    if not value:
+        return None, "Значення не може бути порожнім."
+
+    if field in {"price", "stock"}:
+        raw = value.replace(" ", "").replace(",", ".")
+        try:
+            return int(float(raw)), None
+        except ValueError:
+            return None, "Тут має бути число. Наприклад: 3490"
+
+    if field == "sizes":
+        cleaned = ", ".join([item.strip() for item in value.replace(";", ",").split(",") if item.strip()])
+        if not cleaned:
+            return None, "Вкажи хоча б один розмір."
+        return cleaned, None
+
+    return value, None
 
 
 class AddProductState(StatesGroup):
@@ -95,6 +200,16 @@ class AddProductState(StatesGroup):
     waiting_for_photos = State()
     waiting_for_stock = State()
     confirmation = State()
+
+
+class EditDraftState(StatesGroup):
+    waiting_for_value = State()
+    waiting_for_photos = State()
+
+
+class EditSavedState(StatesGroup):
+    waiting_for_value = State()
+    waiting_for_photos = State()
 
 
 async def start_add_product(message: types.Message, state: FSMContext):
@@ -163,23 +278,21 @@ async def save_season(message: types.Message, state: FSMContext):
 
 
 async def save_price(message: types.Message, state: FSMContext):
-    raw_price = str(message.text).replace(" ", "").replace(",", ".")
-    try:
-        price = int(float(raw_price))
-    except ValueError:
-        return await message.answer("Ціна має бути числом, наприклад 3490.")
+    value, error = _validate_draft_value("price", message.text)
+    if error:
+        return await message.answer(error)
 
-    await state.update_data(price=price)
+    await state.update_data(price=value)
     await AddProductState.next()
     await message.answer("Введіть розміри через кому, наприклад: 36, 37, 38")
 
 
 async def save_sizes(message: types.Message, state: FSMContext):
-    sizes = ", ".join([item.strip() for item in str(message.text).replace(";", ",").split(",") if item.strip()])
-    if not sizes:
-        return await message.answer("Вкажіть хоча б один розмір.")
+    value, error = _validate_draft_value("sizes", message.text)
+    if error:
+        return await message.answer(error)
 
-    await state.update_data(sizes=sizes)
+    await state.update_data(sizes=value)
     await AddProductState.next()
     await message.answer("Додайте опис товару:")
 
@@ -218,9 +331,7 @@ async def _flush_media_group(key, state: FSMContext, message: types.Message):
 
     await state.update_data(photo_ids=current_photo_ids)
 
-    await message.answer(
-        f"✅ Додано фото: {added}. Всього фото: {len(current_photo_ids)}"
-    )
+    await message.answer(f"✅ Додано фото: {added}. Всього фото: {len(current_photo_ids)}")
 
 
 async def collect_photo(message: types.Message, state: FSMContext):
@@ -251,9 +362,7 @@ async def collect_photo(message: types.Message, state: FSMContext):
             MEDIA_GROUP_BUFFER[key].append(photo_id)
 
         if key not in MEDIA_GROUP_TASKS:
-            MEDIA_GROUP_TASKS[key] = asyncio.create_task(
-                _flush_media_group(key, state, message)
-            )
+            MEDIA_GROUP_TASKS[key] = asyncio.create_task(_flush_media_group(key, state, message))
 
 
 async def finish_photos(message: types.Message, state: FSMContext):
@@ -262,40 +371,116 @@ async def finish_photos(message: types.Message, state: FSMContext):
     if not photo_ids:
         return await message.answer("Спочатку додайте хоча б одне фото.")
 
+    current_state = await state.get_state()
+
+    if current_state == EditDraftState.waiting_for_photos.state:
+        await state.update_data(photo_ids=photo_ids)
+        await message.answer("✅ Фото оновлено.", reply_markup=kb.get_cancel_keyboard())
+        return await _send_draft_preview(message, state)
+
+    if current_state == EditSavedState.waiting_for_photos.state:
+        article = data.get("edit_article")
+        result = await db.update_product_field(article, "photo_ids", ",".join(photo_ids))
+
+        if result is None:
+            return await message.answer("❌ Не вдалося оновити фото в таблиці. Перевір GAS.")
+
+        await state.finish()
+        product = await db.get_product_by_article(article)
+        await message.answer("✅ Фото оновлено.")
+        return await send_publish_preview(message.chat.id, product, message.bot)
+
     await AddProductState.next()
     await message.answer("Введіть залишок на складі:", reply_markup=kb.get_cancel_keyboard())
 
 
 async def save_stock(message: types.Message, state: FSMContext):
-    raw_stock = str(message.text).strip()
-    if not raw_stock.isdigit():
-        return await message.answer("Залишок має бути числом.")
+    value, error = _validate_draft_value("stock", message.text)
+    if error:
+        return await message.answer(error)
 
-    await state.update_data(stock=int(raw_stock))
-    await AddProductState.next()
+    await state.update_data(stock=value)
+    await _send_draft_preview(message, state)
+
+
+async def start_edit_draft_product(callback_query: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback_query.from_user.id):
+        return await callback_query.answer("Немає доступу.", show_alert=True)
+
+    await callback_query.answer()
 
     data = await state.get_data()
-    preview_text = (
-        f"Перевірте дані товару:\n\n"
-        f"Артикул: {data['article']}\n"
-        f"Бренд: {data['brand']}\n"
-        f"Модель: {data['model']}\n"
-        f"Категорія: {data['category']}\n"
-        f"Сезон: {data['season']}\n"
-        f"Ціна: {data['price']} грн\n"
-        f"Розміри: {data['sizes']}\n"
-        f"Опис: {data['description']}\n"
-        f"Фото: {len(data.get('photo_ids', []))} шт.\n"
-        f"Залишок: {data['stock']}"
+    if not data:
+        return await callback_query.message.answer("Немає даних для редагування.")
+
+    await callback_query.message.answer(
+        _draft_edit_menu_text(data),
+        parse_mode="HTML",
+        reply_markup=kb.get_draft_edit_fields_keyboard(),
     )
 
-    first_photo = data["photo_ids"][0]
-    await message.answer_photo(
-        first_photo,
-        caption=preview_text,
-        reply_markup=kb.get_save_or_publish_keyboard(),
+
+async def choose_draft_edit_field(callback_query: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback_query.from_user.id):
+        return await callback_query.answer("Немає доступу.", show_alert=True)
+
+    await callback_query.answer()
+
+    field = callback_query.data.replace("admin_edit_draft_field_", "", 1).strip()
+
+    if field not in FIELD_LABELS:
+        return await callback_query.message.answer("Невідоме поле.")
+
+    data = await state.get_data()
+    current_value = data.get(field, "")
+
+    if field == "photo_ids":
+        await EditDraftState.waiting_for_photos.set()
+        await state.update_data(photo_ids=[])
+        return await callback_query.message.answer(
+            f"Поточних фото: {len(data.get('photo_ids', []))} шт.\n\n"
+            f"Надішли нові фото. Старі фото будуть замінені.\n"
+            f"Коли завершиш, натисни '✅ Фото готово'.",
+            reply_markup=kb.get_cancel_keyboard("✅ Фото готово"),
+        )
+
+    await EditDraftState.waiting_for_value.set()
+    await state.update_data(edit_field=field)
+
+    await callback_query.message.answer(
+        f"Поле: <b>{FIELD_LABELS[field]}</b>\n\n"
+        f"Поточне значення:\n"
+        f"<code>{current_value or '—'}</code>\n\n"
+        f"Надішли нове значення:",
         parse_mode="HTML",
+        reply_markup=kb.get_cancel_keyboard(),
     )
+
+
+async def save_draft_edited_field(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    field = data.get("edit_field")
+
+    if not field:
+        return await message.answer("Не знайдено поле для редагування.")
+
+    value, error = _validate_draft_value(field, message.text)
+    if error:
+        return await message.answer(error)
+
+    if field == "article":
+        existing = await db.get_product_by_article(str(value))
+        if _product_exists(existing, str(value)):
+            return await message.answer("Товар з таким артикулом уже існує. Введіть інший артикул.")
+
+    await state.update_data({field: value, "edit_field": None})
+    await message.answer(f"✅ Поле «{FIELD_LABELS[field]}» оновлено.")
+    await _send_draft_preview(message, state)
+
+
+async def back_to_draft_preview(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()
+    await _send_draft_preview(callback_query.message, state)
 
 
 async def _save_product_from_state(state: FSMContext):
@@ -455,6 +640,97 @@ async def preview_publish_product(callback_query: types.CallbackQuery, bot):
         )
 
     await send_publish_preview(callback_query.message.chat.id, product, bot)
+
+
+async def start_edit_saved_product(callback_query: types.CallbackQuery, bot):
+    if not is_admin(callback_query.from_user.id):
+        return await callback_query.answer("Немає доступу.", show_alert=True)
+
+    await callback_query.answer()
+
+    article = callback_query.data.replace("edit_product_", "", 1).strip()
+    product = await db.get_product_by_article(article)
+
+    if not product:
+        return await callback_query.message.answer("❌ Товар не знайдено.")
+
+    await callback_query.message.answer(
+        _saved_edit_menu_text(product),
+        parse_mode="HTML",
+        reply_markup=kb.get_saved_edit_fields_keyboard(article),
+    )
+
+
+async def choose_saved_edit_field(callback_query: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback_query.from_user.id):
+        return await callback_query.answer("Немає доступу.", show_alert=True)
+
+    await callback_query.answer()
+
+    raw = callback_query.data.replace("edit_saved_field_", "", 1)
+    article, field = raw.rsplit("_", 1)
+
+    if field not in FIELD_LABELS:
+        return await callback_query.message.answer("Невідоме поле.")
+
+    product = await db.get_product_by_article(article)
+    if not product:
+        return await callback_query.message.answer("❌ Товар не знайдено.")
+
+    if field == "photo_ids":
+        photos = _parse_photo_ids(product.get("Фото") or product.get("photo_ids") or "")
+        await EditSavedState.waiting_for_photos.set()
+        await state.update_data(edit_article=article, edit_field=field, photo_ids=[])
+
+        return await callback_query.message.answer(
+            f"Поточних фото: {len(photos)} шт.\n\n"
+            f"Надішли нові фото товару. Старі фото будуть замінені.\n"
+            f"Коли завершиш, натисни '✅ Фото готово'.",
+            reply_markup=kb.get_cancel_keyboard("✅ Фото готово"),
+        )
+
+    current_value = (
+        product.get(field)
+        or product.get("Артикул" if field == "article" else "")
+        or product.get(FIELD_LABELS.get(field, ""))
+        or ""
+    )
+
+    await EditSavedState.waiting_for_value.set()
+    await state.update_data(edit_article=article, edit_field=field)
+
+    await callback_query.message.answer(
+        f"Поле: <b>{FIELD_LABELS[field]}</b>\n\n"
+        f"Поточне значення:\n"
+        f"<code>{current_value or '—'}</code>\n\n"
+        f"Надішли нове значення:",
+        parse_mode="HTML",
+        reply_markup=kb.get_cancel_keyboard(),
+    )
+
+
+async def save_saved_edited_field(message: types.Message, state: FSMContext, bot):
+    data = await state.get_data()
+    article = data.get("edit_article")
+    field = data.get("edit_field")
+
+    if not article or not field:
+        await state.finish()
+        return await message.answer("Не знайдено товар або поле.")
+
+    value, error = _validate_draft_value(field, message.text)
+    if error:
+        return await message.answer(error)
+
+    result = await db.update_product_field(article, field, value)
+
+    if result is None:
+        return await message.answer("❌ Не вдалося оновити поле в таблиці. Перевір GAS.")
+
+    await state.finish()
+    product = await db.get_product_by_article(article)
+    await message.answer(f"✅ Поле «{FIELD_LABELS[field]}» оновлено.")
+    await send_publish_preview(message.chat.id, product, bot)
 
 
 async def publish_selected_product(callback_query: types.CallbackQuery, bot):
