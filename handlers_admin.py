@@ -29,15 +29,32 @@ def _main_menu_for(user_id):
 
 
 def _get_article(product):
+    if not isinstance(product, dict):
+        return ""
     return str(product.get("Артикул") or product.get("article") or "").strip()
 
 
 def _get_product_id(product):
+    if not isinstance(product, dict):
+        return ""
     return str(product.get("product_id") or product.get("ID") or "").strip()
 
 
 def _get_status(product):
+    if not isinstance(product, dict):
+        return "draft"
     return str(product.get("Статус") or product.get("status") or "draft").strip()
+
+
+def _product_exists(product, article):
+    if not isinstance(product, dict):
+        return False
+
+    if product.get("ok") is False:
+        return False
+
+    product_article = _get_article(product)
+    return bool(product_article and product_article == str(article).strip())
 
 
 def _product_caption(product):
@@ -96,7 +113,8 @@ async def save_article(message: types.Message, state: FSMContext):
         return await message.answer("Артикул обов'язковий.")
 
     existing = await db.get_product_by_article(article)
-    if existing:
+
+    if _product_exists(existing, article):
         return await message.answer("Товар з таким артикулом уже існує. Введіть інший артикул.")
 
     await state.update_data(article=article)
@@ -337,7 +355,7 @@ async def save_and_publish_product(callback_query: types.CallbackQuery, state: F
     await callback_query.message.answer("✅ Товар збережено. Відкриваю прев'ю перед публікацією...")
 
     product = await db.get_product_by_article(payload["article"])
-    if not product:
+    if not product or not _product_exists(product, payload["article"]):
         return await callback_query.message.answer("Товар збережено, але не вдалося завантажити прев'ю.")
 
     await send_publish_preview(callback_query.message.chat.id, product, bot)
