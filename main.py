@@ -276,11 +276,28 @@ async def ignore_h(c: types.CallbackQuery):
 @dp.callback_query_handler(lambda c: c.data == "admin_save_product", state=admin.AddProductState.confirmation)
 async def admin_save_h(c: types.CallbackQuery, state: FSMContext):
     await admin.confirm_save_product(c, state)
+    await cache.update()
 
 
 @dp.callback_query_handler(lambda c: c.data == "admin_save_and_publish_product", state=admin.AddProductState.confirmation)
 async def admin_save_and_publish_h(c: types.CallbackQuery, state: FSMContext):
     await admin.save_and_publish_product(c, state, bot)
+    await cache.update()
+
+
+@dp.callback_query_handler(lambda c: c.data == "admin_edit_draft_product", state=admin.AddProductState.confirmation)
+async def admin_edit_draft_product_h(c: types.CallbackQuery, state: FSMContext):
+    await admin.start_edit_draft_product(c, state)
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("admin_edit_draft_field_"), state="*")
+async def admin_edit_draft_field_h(c: types.CallbackQuery, state: FSMContext):
+    await admin.choose_draft_edit_field(c, state)
+
+
+@dp.callback_query_handler(lambda c: c.data == "admin_back_to_draft_preview", state="*")
+async def admin_back_to_draft_preview_h(c: types.CallbackQuery, state: FSMContext):
+    await admin.back_to_draft_preview(c, state)
 
 
 @dp.callback_query_handler(lambda c: c.data in ["admin_cancel_product", "admin_cancel_publish"], state="*")
@@ -299,9 +316,20 @@ async def admin_publish_preview_h(c: types.CallbackQuery):
     await admin.preview_publish_product(c, bot)
 
 
+@dp.callback_query_handler(lambda c: c.data.startswith("edit_product_"), state="*")
+async def admin_edit_saved_product_h(c: types.CallbackQuery):
+    await admin.start_edit_saved_product(c, bot)
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("edit_saved_field_"), state="*")
+async def admin_edit_saved_field_h(c: types.CallbackQuery, state: FSMContext):
+    await admin.choose_saved_edit_field(c, state)
+
+
 @dp.callback_query_handler(lambda c: c.data.startswith("publish_"), state="*")
 async def admin_publish_selected_h(c: types.CallbackQuery):
     await admin.publish_selected_product(c, bot)
+    await cache.update()
 
 
 @dp.message_handler(content_types=["contact", "text"], state=order.OrderState.waiting_for_phone)
@@ -372,6 +400,38 @@ async def admin_finish_photos_h(m: types.Message, state: FSMContext):
 @dp.message_handler(state=admin.AddProductState.waiting_for_stock)
 async def admin_stock_h(m: types.Message, state: FSMContext):
     await admin.save_stock(m, state)
+
+
+@dp.message_handler(content_types=["photo"], state=admin.EditDraftState.waiting_for_photos)
+async def admin_edit_draft_photo_h(m: types.Message, state: FSMContext):
+    await admin.collect_photo(m, state)
+
+
+@dp.message_handler(lambda m: m.text == "✅ Фото готово", state=admin.EditDraftState.waiting_for_photos)
+async def admin_edit_draft_finish_photos_h(m: types.Message, state: FSMContext):
+    await admin.finish_photos(m, state)
+
+
+@dp.message_handler(state=admin.EditDraftState.waiting_for_value)
+async def admin_edit_draft_value_h(m: types.Message, state: FSMContext):
+    await admin.save_draft_edited_field(m, state)
+
+
+@dp.message_handler(content_types=["photo"], state=admin.EditSavedState.waiting_for_photos)
+async def admin_edit_saved_photo_h(m: types.Message, state: FSMContext):
+    await admin.collect_photo(m, state)
+
+
+@dp.message_handler(lambda m: m.text == "✅ Фото готово", state=admin.EditSavedState.waiting_for_photos)
+async def admin_edit_saved_finish_photos_h(m: types.Message, state: FSMContext):
+    await admin.finish_photos(m, state)
+    await cache.update()
+
+
+@dp.message_handler(state=admin.EditSavedState.waiting_for_value)
+async def admin_edit_saved_value_h(m: types.Message, state: FSMContext):
+    await admin.save_saved_edited_field(m, state, bot)
+    await cache.update()
 
 
 if __name__ == "__main__":
