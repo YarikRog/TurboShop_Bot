@@ -1,4 +1,5 @@
 import os
+import asyncio
 import logging
 from urllib.parse import quote
 
@@ -13,6 +14,10 @@ logger = logging.getLogger("TurboBot.Admin")
 
 ADMIN_IDS = {int(item.strip()) for item in os.getenv("ADMIN_IDS", "").split(",") if item.strip().isdigit()}
 SHOP_GROUP_ID = os.getenv("SHOP_GROUP_ID")
+
+MEDIA_GROUP_BUFFER = {}
+MEDIA_GROUP_TASKS = {}
+MEDIA_GROUP_LOCK = asyncio.Lock()
 
 
 def is_admin(user_id):
@@ -161,15 +166,63 @@ async def save_description(message: types.Message, state: FSMContext):
     )
 
 
+async def _flush_media_group(key, state: FSMContext, message: types.Message):
+    await asyncio.sleep(1.2)
+
+    async with MEDIA_GROUP_LOCK:
+        new_photo_ids = MEDIA_GROUP_BUFFER.pop(key, [])
+        MEDIA_GROUP_TASKS.pop(key, None)
+
+    if not new_photo_ids:
+        return
+
+    data = await state.get_data()
+    current_photo_ids = list(data.get("photo_ids", []))
+
+    added = 0
+    for photo_id in new_photo_ids:
+        if photo_id not in current_photo_ids:
+            current_photo_ids.append(photo_id)
+            added += 1
+
+    await state.update_data(photo_ids=current_photo_ids)
+
+    await message.answer(
+        f"✅ Додано фото: {added}. Всього фото: {len(current_photo_ids)}"
+    )
+
+
 async def collect_photo(message: types.Message, state: FSMContext):
     if not message.photo:
         return await message.answer("Будь ласка, надішліть фото як зображення Telegram.")
 
-    data = await state.get_data()
-    photo_ids = list(data.get("photo_ids", []))
-    photo_ids.append(message.photo[-1].file_id)
-    await state.update_data(photo_ids=photo_ids)
-    await message.answer(f"Фото додано: {len(photo_ids)}")
+    photo_id = message.photo[-1].file_id
+    media_group_id = message.media_group_id
+
+    if not media_group_id:
+        data = await state.get_data()
+        photo_ids = list(data.get("photo_ids", []))
+
+        if photo_id not in photo_ids:
+            photo_ids.append(photo_id)
+            await state.update_data(photo_ids=photo_ids)
+            return await message.answer(f"✅ Фото додано: {len(photo_ids)}")
+
+        return await message.answer(f"⚠️ Це фото вже додано. Всього фото: {len(photo_ids)}")
+
+    key = (message.chat.id, message.from_user.id, media_group_id)
+
+    async with MEDIA_GROUP_LOCK:
+        if key not in MEDIA_GROUP_BUFFER:
+            MEDIA_GROUP_BUFFER[key] = []
+
+        if photo_id not in MEDIA_GROUP_BUFFER[key]:
+            MEDIA_GROUP_BUFFER[key].append(photo_id)
+
+        if key not in MEDIA_GROUP_TASKS:
+            MEDIA_GROUP_TASKS[key] = asyncio.create_task(
+                _flush_media_group(key, state, message)
+            )
 
 
 async def finish_photos(message: types.Message, state: FSMContext):
@@ -206,7 +259,12 @@ async def save_stock(message: types.Message, state: FSMContext):
     )
 
     first_photo = data["photo_ids"][0]
-    await message.answer_photo(first_photo, caption=preview_text, reply_markup=kb.get_save_or_publish_keyboard(), parse_mode="HTML")
+    await message.answer_photo(
+        first_photo,
+        caption=preview_text,
+        reply_markup=kb.get_save_or_publish_keyboard(),
+        parse_mode="HTML",
+    )
 
 
 async def _save_product_from_state(state: FSMContext):
