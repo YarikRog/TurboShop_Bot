@@ -50,7 +50,7 @@ def get_product_navigation(index, total, article, sizes=None, current_size=None,
     keyboard.row(InlineKeyboardButton(text="🛒 Оформити замовлення", callback_data=f"buy_{article}"))
     keyboard.row(
         InlineKeyboardButton(text="📸 ВСІ ФОТО", callback_data=f"more_photos_{article}"),
-        InlineKeyboardButton(text="📐 РОЗМІРНА СІТКА", callback_data="show_grid_alert")
+        InlineKeyboardButton(text="📐 РОЗМІРНА СІТКА", callback_data="show_grid_alert"),
     )
     return keyboard
 
