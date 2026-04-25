@@ -72,6 +72,30 @@ def _get_publish_status(product):
     return str(product.get("publish_status") or "").strip()
 
 
+def _human_status(product):
+    status = _get_status(product).strip().lower()
+    publish_status = _get_publish_status(product).strip().lower()
+
+    if status == "hidden":
+        return "🙈 Приховано"
+    if status == "sold_out":
+        return "❌ Немає в наявності"
+    if publish_status == "queued":
+        return "🕒 Заплановано"
+    if publish_status == "published" or status == "published":
+        return "✅ Опубліковано"
+    if status in {"draft", "unpublished", ""}:
+        return "📝 Неопубліковано"
+
+    return status or "📝 Неопубліковано"
+
+
+def _with_human_status(product):
+    item = dict(product or {})
+    item["_human_status"] = _human_status(item)
+    return item
+
+
 def _format_publish_at(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
 
@@ -106,23 +130,6 @@ def _next_future_slots(limit: int):
     return slots
 
 
-def _is_schedulable_product(product):
-    article = _get_article(product)
-    status = _get_status(product).lower()
-    publish_status = _get_publish_status(product).lower()
-
-    if not article:
-        return False
-
-    if status in {"hidden", "sold_out"}:
-        return False
-
-    if publish_status in {"queued", "published"}:
-        return False
-
-    return True
-
-
 def _product_exists(product, article):
     if not isinstance(product, dict):
         return False
@@ -144,18 +151,42 @@ def _parse_photo_ids(raw_photos):
 
 def _product_caption(product):
     article = _get_article(product)
-    description = str(product.get("Опис") or product.get("description") or "").strip()
-    short_description = description[:300] if description else "Опис буде додано менеджером."
+    brand = str(product.get("Бренд") or product.get("brand") or "").strip()
+    model = str(product.get("Модель") or product.get("model") or "").strip()
+    category = str(product.get("Категорія") or product.get("category") or "—").strip()
+    season = str(product.get("Сезон") or product.get("season") or "—").strip()
+    price = str(product.get("Ціна") or product.get("price") or "—").strip()
     sizes = str(product.get("Розміри") or product.get("sizes") or "—").strip()
+    description = str(product.get("Опис") or product.get("description") or "").strip()
+    short_description = description[:450] if description else "Опис буде додано менеджером."
 
     return (
-        f"👟 <b>{product.get('Бренд') or product.get('brand')} {product.get('Модель') or product.get('model')}</b>\n"
-        f"🗂 Категорія: <b>{product.get('Категорія') or product.get('category') or '—'}</b>\n"
-        f"🍂 Сезон: <b>{product.get('Сезон') or product.get('season') or '—'}</b>\n"
-        f"💰 Ціна: <b>{product.get('Ціна') or product.get('price')} грн</b>\n"
-        f"📏 Розміри: <b>{sizes}</b>\n"
+        f"👟 <b>{brand} {model}</b>\n\n"
+        f"💰 Ціна: <b>{price} грн</b>\n"
+        f"📏 Розміри: <b>{sizes}</b>\n\n"
+        f"🗂 Категорія: <b>{category}</b>\n"
+        f"🍂 Сезон: <b>{season}</b>\n"
         f"🆔 Артикул: <code>{article}</code>\n\n"
-        f"{short_description}"
+        f"{short_description}\n\n"
+        f"🚚 Відправка Новою поштою\n"
+        f"💳 Оплата при отриманні"
+    )
+
+
+def _product_order_link(bot_username, article):
+    payload = quote(f"buy_{article}")
+    return f"https://t.me/{bot_username}?start={payload}"
+
+
+def _product_caption_with_order_link(product, bot_username):
+    article = _get_article(product)
+    order_link = _product_order_link(bot_username, article)
+
+    return (
+        f"{_product_caption(product)}\n\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"Для оформлення натискай сюди 👇\n"
+        f'<a href="{order_link}"><b>🛒 ОФОРМИТИ ЗАМОВЛЕННЯ</b></a>'
     )
 
 
@@ -206,7 +237,7 @@ def _saved_edit_menu_text(product):
         f"Опис: <i>{product.get('Опис') or product.get('description') or '—'}</i>\n"
         f"Фото: <b>{len(photos)} шт.</b>\n"
         f"Залишок: <b>{product.get('Залишок') or product.get('stock') or '—'}</b>\n"
-        f"Статус: <b>{_get_status(product)}</b>\n\n"
+        f"Статус: <b>{_human_status(product)}</b>\n\n"
         f"Натисни поле, яке треба змінити."
     )
 
@@ -227,8 +258,10 @@ def _filter_products_for_publish(products, filter_name):
 
         if filter_name == "all":
             result.append(product)
+        elif filter_name == "latest":
+            result.append(product)
         elif filter_name == "draft":
-            if status in {"draft", "unpublished"} and publish_status not in {"queued", "published"}:
+            if status in {"draft", "unpublished", ""} and publish_status not in {"queued", "published"}:
                 result.append(product)
         elif filter_name == "queued":
             if publish_status == "queued":
@@ -237,8 +270,12 @@ def _filter_products_for_publish(products, filter_name):
             if status == "published" or publish_status == "published":
                 result.append(product)
 
-    result.sort(key=lambda product: _get_article(product), reverse=True)
-    return result
+    result.sort(key=lambda product: str(product.get("created_at") or product.get("Дата") or _get_article(product)), reverse=True)
+
+    if filter_name == "latest":
+        result = result[:5]
+
+    return [_with_human_status(product) for product in result]
 
 
 def _search_products(products, query):
@@ -259,10 +296,18 @@ def _search_products(products, query):
         ).lower()
 
         if q in searchable:
-            result.append(product)
+            result.append(_with_human_status(product))
 
-    result.sort(key=lambda product: _get_article(product), reverse=True)
+    result.sort(key=lambda product: str(product.get("created_at") or product.get("Дата") or _get_article(product)), reverse=True)
     return result
+
+
+def _get_unpublished_products(products):
+    return _filter_products_for_publish(products, "draft")
+
+
+def _get_queued_products(products):
+    return _filter_products_for_publish(products, "queued")
 
 
 def _paginate(items, page, page_size=PUBLISH_PAGE_SIZE):
@@ -274,20 +319,26 @@ def _paginate(items, page, page_size=PUBLISH_PAGE_SIZE):
     return items[start:end], page, total_pages, total
 
 
-def _product_order_link(bot_username, article):
-    payload = quote(f"buy_{article}")
-    return f"https://t.me/{bot_username}?start={payload}"
+def _validate_draft_value(field, value):
+    value = str(value or "").strip()
 
+    if not value:
+        return None, "Значення не може бути порожнім."
 
-def _product_caption_with_order_link(product, bot_username):
-    article = _get_article(product)
-    order_link = _product_order_link(bot_username, article)
+    if field in {"price", "stock"}:
+        raw = value.replace(" ", "").replace(",", ".")
+        try:
+            return int(float(raw)), None
+        except ValueError:
+            return None, "Тут має бути число. Наприклад: 3490"
 
-    return (
-        f"{_product_caption(product)}\n\n"
-        f"Для оформлення натискай сюди 👇\n"
-        f'<a href="{order_link}"><b>🛒 ОФОРМИТИ ЗАМОВЛЕННЯ</b></a>'
-    )
+    if field == "sizes":
+        cleaned = ", ".join([item.strip() for item in value.replace(";", ",").split(",") if item.strip()])
+        if not cleaned:
+            return None, "Вкажи хоча б один розмір."
+        return cleaned, None
+
+    return value, None
 
 
 async def _send_publish_page(answer_method, products, filter_name="all", page=0):
@@ -295,10 +346,11 @@ async def _send_publish_page(answer_method, products, filter_name="all", page=0)
     page_items, page, total_pages, total = _paginate(filtered, page)
 
     labels = {
-        "all": "Усі товари",
-        "draft": "Чернетки",
-        "queued": "Заплановані",
-        "published": "Опубліковані",
+        "all": "📦 Усі товари",
+        "latest": "🆕 Останні 5",
+        "draft": "📝 Неопубліковані",
+        "queued": "🕒 Заплановані",
+        "published": "✅ Опубліковані",
     }
 
     if not filtered:
@@ -313,8 +365,10 @@ async def _send_publish_page(answer_method, products, filter_name="all", page=0)
         brand = product.get("Бренд") or product.get("brand") or ""
         model = product.get("Модель") or product.get("model") or ""
         price = product.get("Ціна") or product.get("price") or ""
-        status = _get_publish_status(product) or _get_status(product)
-        lines.append(f"• <code>{article}</code> | {brand} {model} | {price} грн | <b>{status}</b>")
+        status = product.get("_human_status") or _human_status(product)
+        publish_at = str(product.get("publish_at") or "").strip()
+        publish_note = f" | {publish_at}" if publish_at else ""
+        lines.append(f"• <code>{article}</code> | {brand} {model} | {price} грн | <b>{status}</b>{publish_note}")
 
     text = (
         f"{labels.get(filter_name, filter_name)}\n"
@@ -389,26 +443,42 @@ async def _send_draft_preview(message_or_callback_message, state: FSMContext):
     )
 
 
-def _validate_draft_value(field, value):
-    value = str(value or "").strip()
+async def _schedule_products(message_or_callback_message, products, limit=None):
+    selected = products[:limit] if limit else products[:30]
 
-    if not value:
-        return None, "Значення не може бути порожнім."
+    if not selected:
+        return await message_or_callback_message.answer("Немає товарів для планування.")
 
-    if field in {"price", "stock"}:
-        raw = value.replace(" ", "").replace(",", ".")
-        try:
-            return int(float(raw)), None
-        except ValueError:
-            return None, "Тут має бути число. Наприклад: 3490"
+    slots = _next_future_slots(len(selected))
+    scheduled_lines = []
 
-    if field == "sizes":
-        cleaned = ", ".join([item.strip() for item in value.replace(";", ",").split(",") if item.strip()])
-        if not cleaned:
-            return None, "Вкажи хоча б один розмір."
-        return cleaned, None
+    for product, slot in zip(selected, slots):
+        article = _get_article(product)
+        publish_at = _format_publish_at(slot)
 
-    return value, None
+        result = await db.update_product_fields(
+            article,
+            {
+                "publish_status": "queued",
+                "publish_at": publish_at,
+                "published_at": "",
+            }
+        )
+
+        if result is None:
+            logger.warning("Failed to schedule article %s", article)
+            continue
+
+        scheduled_lines.append(f"{article} → {publish_at}")
+
+    if not scheduled_lines:
+        return await message_or_callback_message.answer("❌ Не вдалося розпланувати товари. Перевір GAS.")
+
+    summary = "\n".join(scheduled_lines)
+    await message_or_callback_message.answer(
+        f"✅ Розплановано: {len(scheduled_lines)} товарів\n\n{summary}",
+        reply_markup=_main_menu_for(message_or_callback_message.chat.id),
+    )
 
 
 class AddProductState(StatesGroup):
@@ -820,7 +890,7 @@ async def send_publish_filtered_page(callback_query: types.CallbackQuery):
         filter_name = "all"
         page = 0
 
-    if filter_name not in {"all", "draft", "queued", "published"}:
+    if filter_name not in {"all", "latest", "draft", "queued", "published"}:
         filter_name = "all"
 
     products = await db.get_products()
@@ -866,7 +936,7 @@ async def handle_publish_search_query(message: types.Message, state: FSMContext)
         brand = product.get("Бренд") or product.get("brand") or ""
         model = product.get("Модель") or product.get("model") or ""
         price = product.get("Ціна") or product.get("price") or ""
-        status = _get_publish_status(product) or _get_status(product)
+        status = product.get("_human_status") or _human_status(product)
         lines.append(f"• <code>{article}</code> | {brand} {model} | {price} грн | <b>{status}</b>")
 
     extra = ""
@@ -880,49 +950,83 @@ async def handle_publish_search_query(message: types.Message, state: FSMContext)
     )
 
 
-async def schedule_all_posts(message: types.Message):
+async def show_schedule_menu(message: types.Message):
     if not is_admin(message.from_user.id):
         return await message.answer("У вас немає доступу до цієї дії.")
 
+    await message.answer(
+        "Оберіть дію з плануванням:",
+        reply_markup=kb.get_schedule_menu_keyboard(),
+    )
+
+
+async def schedule_latest_posts(callback_query: types.CallbackQuery):
+    if not is_admin(callback_query.from_user.id):
+        return await callback_query.answer("Немає доступу.", show_alert=True)
+
+    await callback_query.answer("Планую останні 5...")
+
     products = await db.get_products()
-    schedulable = [product for product in products if _is_schedulable_product(product)]
-    schedulable.sort(key=lambda product: _get_article(product), reverse=True)
+    unpublished = _get_unpublished_products(products)
+    latest_five = unpublished[:5]
 
-    selected = schedulable[:30]
+    await _schedule_products(callback_query.message, latest_five, limit=5)
 
-    if not selected:
-        return await message.answer("Немає товарів для планування.")
 
-    slots = _next_future_slots(len(selected))
-    scheduled_lines = []
+async def schedule_unpublished_posts(callback_query: types.CallbackQuery):
+    if not is_admin(callback_query.from_user.id):
+        return await callback_query.answer("Немає доступу.", show_alert=True)
 
-    for product, slot in zip(selected, slots):
+    await callback_query.answer("Планую неопубліковані...")
+
+    products = await db.get_products()
+    unpublished = _get_unpublished_products(products)
+
+    await _schedule_products(callback_query.message, unpublished, limit=30)
+
+
+async def cancel_scheduled_posts(callback_query: types.CallbackQuery):
+    if not is_admin(callback_query.from_user.id):
+        return await callback_query.answer("Немає доступу.", show_alert=True)
+
+    await callback_query.answer("Скасовую заплановане...")
+
+    products = await db.get_products()
+    queued = _get_queued_products(products)
+
+    if not queued:
+        return await callback_query.message.answer(
+            "Немає запланованих товарів для скасування.",
+            reply_markup=_main_menu_for(callback_query.from_user.id),
+        )
+
+    cancelled = []
+
+    for product in queued:
         article = _get_article(product)
-        publish_at = _format_publish_at(slot)
-
         result = await db.update_product_fields(
             article,
             {
-                "publish_status": "queued",
-                "publish_at": publish_at,
+                "publish_status": "",
+                "publish_at": "",
                 "published_at": "",
             }
         )
 
-        if result is None:
-            logger.warning("Failed to schedule article %s", article)
-            continue
+        if result is not None:
+            cancelled.append(article)
 
-        scheduled_lines.append(f"{article} → {publish_at}")
+    if not cancelled:
+        return await callback_query.message.answer("❌ Не вдалося скасувати заплановане. Перевір GAS.")
 
-    if not scheduled_lines:
-        return await message.answer("❌ Не вдалося розпланувати товари. Перевір GAS.")
-
-    summary = "\n".join(scheduled_lines)
-    await message.answer(
-        f"✅ Розплановано: {len(scheduled_lines)} товарів\n\n{summary}",
-        reply_markup=_main_menu_for(message.from_user.id),
+    await callback_query.message.answer(
+        f"✅ Скасовано заплановане: {len(cancelled)} товарів\n\n" + "\n".join(cancelled[:30]),
+        reply_markup=_main_menu_for(callback_query.from_user.id),
     )
+
+
+async def schedule_all_posts(message: types.Message):
+    await show_schedule_menu(message)
 
 
 async def send_publish_list(answer_method, user_id):
@@ -944,11 +1048,11 @@ async def send_publish_preview(chat_id, product, bot):
     caption = (
         f"Прев'ю перед публікацією:\n\n"
         f"{_product_caption(product)}\n\n"
-        f"Статус: <b>{_get_status(product)}</b>"
+        f"Статус: <b>{_human_status(product)}</b>"
     )
 
     if publish_status or publish_at:
-        caption += f"\nПланування: <b>{publish_status or '—'}</b> {publish_at or ''}"
+        caption += f"\nПланування: <b>{_human_status(product)}</b> {publish_at or ''}"
 
     photos = _parse_photo_ids(product.get("Фото") or product.get("photo_ids") or "")
 
