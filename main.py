@@ -151,7 +151,7 @@ async def novinki_h(m: types.Message, state: FSMContext):
 async def manager_h(m: types.Message):
     username = os.getenv("MANAGER_USERNAME", "").strip().replace("@", "")
     if username:
-        await m.answer(f"Напишіть менеджеру: @{username}")
+        await m.answer(f"Напишіть менеджеру: https://t.me/{username}")
     else:
         await m.answer("Менеджер скоро буде доданий. Поки можете написати нам у чаті.")
 
@@ -178,10 +178,9 @@ async def publish_product_h(m: types.Message):
     await admin.start_publish_product(m)
 
 
-@dp.message_handler(lambda m: m.text == "📅 Розпланувати всі пости", state="*")
+@dp.message_handler(lambda m: m.text in ["📅 Розпланувати всі пости", "📅 Розпланувати пости"], state="*")
 async def schedule_all_posts_h(m: types.Message):
     await admin.schedule_all_posts(m)
-    await cache.update()
 
 
 @dp.callback_query_handler(lambda c: c.data.startswith("size_"), state="*")
@@ -335,6 +334,24 @@ async def admin_publish_filter_page_h(c: types.CallbackQuery):
 @dp.callback_query_handler(lambda c: c.data == "publish_search", state="*")
 async def admin_publish_search_h(c: types.CallbackQuery, state: FSMContext):
     await admin.start_publish_search(c, state)
+
+
+@dp.callback_query_handler(lambda c: c.data == "schedule_latest_5", state="*")
+async def admin_schedule_latest_h(c: types.CallbackQuery):
+    await admin.schedule_latest_posts(c)
+    await cache.update()
+
+
+@dp.callback_query_handler(lambda c: c.data == "schedule_unpublished", state="*")
+async def admin_schedule_unpublished_h(c: types.CallbackQuery):
+    await admin.schedule_unpublished_posts(c)
+    await cache.update()
+
+
+@dp.callback_query_handler(lambda c: c.data == "schedule_cancel_queued", state="*")
+async def admin_cancel_scheduled_h(c: types.CallbackQuery):
+    await admin.cancel_scheduled_posts(c)
+    await cache.update()
 
 
 @dp.callback_query_handler(lambda c: c.data.startswith("preview_publish_"), state="*")
