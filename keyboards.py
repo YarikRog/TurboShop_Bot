@@ -6,7 +6,7 @@ def main_menu(is_admin=False):
 
     if is_admin:
         keyboard.row(KeyboardButton("➕ Додати товар"), KeyboardButton("📤 Опублікувати товар"))
-        keyboard.row(KeyboardButton("📅 Розпланувати всі пости"))
+        keyboard.row(KeyboardButton("📅 Розпланувати пости"))
         keyboard.row(KeyboardButton("🔥 Наші новинки"), KeyboardButton("💬 Менеджер"))
         return keyboard
 
@@ -90,7 +90,7 @@ def get_after_order_keyboard(manager_username=None, is_admin=False):
 
     if is_admin:
         keyboard.row(KeyboardButton("➕ Додати товар"), KeyboardButton("📤 Опублікувати товар"))
-        keyboard.row(KeyboardButton("📅 Розпланувати всі пости"))
+        keyboard.row(KeyboardButton("📅 Розпланувати пости"))
 
     return keyboard
 
@@ -139,12 +139,22 @@ def get_draft_edit_fields_keyboard():
 
 def get_publish_filter_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=1)
-    keyboard.row(InlineKeyboardButton(text="🔎 Пошук товару", callback_data="publish_search"))
-    keyboard.row(InlineKeyboardButton(text="📝 Чернетки", callback_data="publish_filter_draft_0"))
+    keyboard.row(InlineKeyboardButton(text="🆕 Останні 5", callback_data="publish_filter_latest_0"))
+    keyboard.row(InlineKeyboardButton(text="📝 Неопубліковані", callback_data="publish_filter_draft_0"))
     keyboard.row(InlineKeyboardButton(text="🕒 Заплановані", callback_data="publish_filter_queued_0"))
     keyboard.row(InlineKeyboardButton(text="✅ Опубліковані", callback_data="publish_filter_published_0"))
     keyboard.row(InlineKeyboardButton(text="📦 Усі товари", callback_data="publish_filter_all_0"))
+    keyboard.row(InlineKeyboardButton(text="🔎 Пошук товару", callback_data="publish_search"))
     keyboard.row(InlineKeyboardButton(text="❌ Скасувати", callback_data="admin_cancel_publish"))
+    return keyboard
+
+
+def get_schedule_menu_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    keyboard.row(InlineKeyboardButton(text="🆕 Розпланувати останні 5", callback_data="schedule_latest_5"))
+    keyboard.row(InlineKeyboardButton(text="📝 Розпланувати неопубліковані", callback_data="schedule_unpublished"))
+    keyboard.row(InlineKeyboardButton(text="❌ Скасувати заплановане", callback_data="schedule_cancel_queued"))
+    keyboard.row(InlineKeyboardButton(text="🏠 Головне меню", callback_data="admin_cancel_publish"))
     return keyboard
 
 
@@ -156,24 +166,22 @@ def get_publish_products_keyboard(products, page=0, filter_name="all", total_pag
         brand = str(product.get("Бренд") or product.get("brand") or "").strip()
         model = str(product.get("Модель") or product.get("model") or "").strip()
         price = str(product.get("Ціна") or product.get("price") or "").strip()
-        status = str(product.get("Статус") or product.get("status") or "draft").strip()
-        publish_status = str(product.get("publish_status") or "").strip()
+        human_status = str(product.get("_human_status") or product.get("publish_status") or product.get("status") or "").strip()
 
         if not article:
             continue
 
-        status_text = publish_status or status
-        title = f"{article} | {brand} {model} | {price} грн | {status_text}"
+        title = f"{article} | {brand} {model} | {price} грн | {human_status}"
         keyboard.add(InlineKeyboardButton(text=title[:64], callback_data=f"preview_publish_{article}"))
 
     nav_buttons = []
 
-    if page > 0:
+    if page > 0 and filter_name != "latest":
         nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"publish_filter_{filter_name}_{page - 1}"))
 
     nav_buttons.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="ignore"))
 
-    if page < total_pages - 1:
+    if page < total_pages - 1 and filter_name != "latest":
         nav_buttons.append(InlineKeyboardButton(text="➡️ Далі", callback_data=f"publish_filter_{filter_name}_{page + 1}"))
 
     keyboard.row(*nav_buttons)
@@ -192,12 +200,12 @@ def get_publish_search_results_keyboard(products):
         brand = str(product.get("Бренд") or product.get("brand") or "").strip()
         model = str(product.get("Модель") or product.get("model") or "").strip()
         price = str(product.get("Ціна") or product.get("price") or "").strip()
-        status = str(product.get("publish_status") or product.get("Статус") or product.get("status") or "").strip()
+        human_status = str(product.get("_human_status") or product.get("publish_status") or product.get("status") or "").strip()
 
         if not article:
             continue
 
-        title = f"{article} | {brand} {model} | {price} грн | {status}"
+        title = f"{article} | {brand} {model} | {price} грн | {human_status}"
         keyboard.add(InlineKeyboardButton(text=title[:64], callback_data=f"preview_publish_{article}"))
 
     keyboard.row(InlineKeyboardButton(text="🔎 Новий пошук", callback_data="publish_search"))
